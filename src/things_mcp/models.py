@@ -154,6 +154,25 @@ class ThingsItem(BaseModel):
     today_index: Optional[int] = None
     index: Optional[int] = None
 
+    # Children (populated only when include_items=True for projects)
+    items: list[ThingsItem] = Field(default_factory=list)
+
+
+class AreaItem(BaseModel):
+    """A Things 3 area -- an ongoing, never-completed structural container.
+
+    Areas have no temporal state (no start, start_date, or status).
+    They hold projects and loose to-dos.
+    """
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    uuid: str
+    title: str
+    type: str = "area"
+    tags: list[str] = Field(default_factory=list)
+    items: list[ThingsItem] = Field(default_factory=list)
+
 
 class ViewResponse(BaseModel):
     """Self-describing wrapper for list-level responses.
