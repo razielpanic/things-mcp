@@ -16,8 +16,11 @@ Security:
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
+import time
+import urllib.parse
 from datetime import date
 from typing import Optional
 
@@ -121,6 +124,16 @@ def _read_temporal_state(uuid: str) -> TemporalState | None:
     )
 
 
+def _verify_url_scheme_write(uuid: str, *, delay: float = 0.5) -> dict | None:
+    """Wait for URL scheme to process, then re-read item from SQLite.
+
+    Returns the raw dict from things.get(uuid), or None if not found.
+    Used after fire-and-forget URL scheme operations.
+    """
+    time.sleep(delay)
+    return things.get(uuid)
+
+
 def schedule_item(
     *,
     uuid: str,
@@ -167,11 +180,12 @@ end tell
         if token is None:
             return ErrorResponse(
                 error="NO_AUTH_TOKEN",
-                message="~/.things-auth required for evening scheduling. "
-                "Enable Things > Settings > General > Enable Things URLs.",
+                message="Auth token not available. "
+                "Enable Things URLs in Things > Settings > General.",
             )
         url = f"things:///update?id={uuid}&when=evening&auth-token={token}"
         subprocess.run(["open", url], capture_output=True, timeout=10)
+        time.sleep(0.5)  # URL scheme is fire-and-forget; wait before verification
 
     elif when_lower == "anytime":
         # CRITICAL: move to list "Anytime", NOT "Someday"
