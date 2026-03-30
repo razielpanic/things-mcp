@@ -397,10 +397,133 @@ def create_project(
 ) -> SuccessResponse | ErrorResponse:
     """Create a new project in Things 3.
 
-    Uses URL scheme for bulk creation with initial to-dos.
+    Without initial to-dos: AppleScript (synchronous, UUID returned).
+    With initial to-dos: URL scheme add-project (fire-and-forget, title-based verification).
     Never schedule a project to Today -- only tasks get Today.
     """
-    raise NotImplementedError("TODO: URL scheme add-project")
+    if area_uuid is not None:
+        _validate_uuid(area_uuid)
+
+    # Block Today scheduling for projects (CLAUDE.md rule 7)
+    if when is not None and when.lower().strip() == "today":
+        return ErrorResponse(
+            error="INVALID_INPUT",
+            message="Cannot schedule a project to Today. Only tasks get Today.",
+        )
+
+    if todos:
+        # URL scheme path: add-project with to-dos JSON array
+        params: dict[str, str] = {"title": title}
+        if notes:
+            params["notes"] = notes
+        if tags:
+            params["tags"] = ",".join(tags)
+        if area_uuid:
+            params["area-id"] = area_uuid
+        if deadline:
+            params["deadline"] = deadline
+        if when:
+            params["when"] = when
+        params["to-dos"] = json.dumps([{"title": t} for t in todos])
+
+        url = "things:///add-project?" + urllib.parse.urlencode(
+            params, quote_via=urllib.parse.quote
+        )
+        subprocess.run(["open", url], capture_output=True, timeout=10)
+
+        # URL scheme doesn't return UUID; title-based search after delay
+        time.sleep(0.5)
+        matches = things.tasks(search_query=title, type="project")
+        if not matches:
+            return ErrorResponse(
+                error="VERIFY_FAILED",
+                message="Project not found after creation via URL scheme.",
+            )
+        # Use the most recent match (last created)
+        project = matches[-1]
+        return SuccessResponse(
+            uuid=project["uuid"],
+            message=f"Created project: {title} (with {len(todos)} to-dos).",
+            action="created",
+            temporal_state=_read_temporal_state(project["uuid"]),
+        )
+
+    # AppleScript path: no todos, synchronous UUID return
+    script = '''
+on run argv
+    set theTitle to item 1 of argv
+    set theNotes to item 2 of argv
+    tell application "Things3"
+        set newProject to make new project with properties {name:theTitle, notes:theNotes}
+        return id of newProject
+    end tell
+end run
+'''
+    new_uuid = run_applescript(script, title, notes or "")
+
+    if not new_uuid:
+        return ErrorResponse(
+            error="CREATE_FAILED",
+            message="AppleScript did not return a UUID for the new project.",
+        )
+
+    # Apply tags if provided
+    if tags:
+        tag_str = ", ".join(tags)
+        tag_script = f'''
+on run argv
+    set theTags to item 1 of argv
+    tell application "Things3"
+        set theProject to to do id "{new_uuid}"
+        set tag names of theProject to theTags
+    end tell
+end run
+'''
+        run_applescript(tag_script, tag_str)
+
+    # Apply area assignment if provided
+    if area_uuid is not None:
+        area_script = f'''
+tell application "Things3"
+    set theProject to to do id "{new_uuid}"
+    set area of theProject to area id "{area_uuid}"
+end tell
+'''
+        run_applescript(area_script)
+
+    # Apply deadline if provided
+    if deadline is not None:
+        target_date = date.fromisoformat(deadline)
+        date_block = _applescript_date_block("theDate", target_date)
+        deadline_script = f'''
+tell application "Things3"
+    set theProject to to do id "{new_uuid}"
+    {date_block}
+    set due date of theProject to theDate
+end tell
+'''
+        run_applescript(deadline_script)
+
+    # Apply scheduling if when is provided
+    if when is not None:
+        schedule_result = schedule_item(uuid=new_uuid, when=when)
+        if not schedule_result.success:
+            return schedule_result
+
+    # Verify creation (CLAUDE.md rule 8)
+    raw = things.get(new_uuid)
+    if raw is None:
+        return ErrorResponse(
+            error="VERIFY_FAILED",
+            message="Project not found after creation.",
+        )
+
+    return SuccessResponse(
+        uuid=new_uuid,
+        message=f"Created project: {title}",
+        action="created",
+        temporal_state=_read_temporal_state(new_uuid),
+    )
 
 
 def update_item(
