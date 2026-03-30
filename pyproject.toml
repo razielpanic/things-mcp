@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "things-mcp"
+version = "0.1.0"
+description = "MCP server for Things 3 with correct data model semantics"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp[cli]>=1.0.0",
+    "things.py>=0.0.16",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[project.scripts]
+things-mcp = "things_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/things_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
