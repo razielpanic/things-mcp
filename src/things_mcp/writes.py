@@ -718,9 +718,37 @@ end tell
 
 
 def delete_item(*, uuid: str) -> SuccessResponse | ErrorResponse:
-    """Move an item to the trash.
+    """Move an item to the trash via AppleScript.
 
-    Requires auth token. Verifies deletion actually happened (the current
-    MCP silently reports success even without auth).
+    Uses AppleScript `move to trash` (no auth token needed).
+    Verifies deletion by confirming things.get(uuid) returns None.
     """
-    raise NotImplementedError("TODO: URL scheme update with auth token check")
+    _validate_uuid(uuid)
+
+    # Verify item exists before trashing
+    raw = things.get(uuid)
+    if raw is None:
+        return ErrorResponse(error="NOT_FOUND", message=f"Item {uuid} not found.")
+
+    script = f'''
+tell application "Things3"
+    move (to do id "{uuid}") to trash
+end tell
+'''
+    run_applescript(script)
+
+    # Verify: trashed items are excluded from default queries
+    # Success = things.get(uuid) returns None
+    raw_after = things.get(uuid)
+    if raw_after is not None:
+        return ErrorResponse(
+            error="VERIFY_FAILED",
+            message=f"Item {uuid} still exists after trash operation.",
+        )
+
+    return SuccessResponse(
+        uuid=uuid,
+        message="Item moved to Trash.",
+        action="trashed",
+        temporal_state=None,
+    )
