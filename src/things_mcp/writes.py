@@ -23,7 +23,8 @@ from typing import Optional
 
 import things
 
-from things_mcp.models import ErrorResponse, SuccessResponse
+from things_mcp.derivation import derive_list
+from things_mcp.models import ErrorResponse, SuccessResponse, TemporalState
 
 # Things 3 uses 22-char base62 identifiers (alphanumeric, no dashes)
 _UUID_RE = re.compile(r"^[A-Za-z0-9]{22}$")
@@ -93,6 +94,30 @@ def _applescript_date_block(var: str, d: date) -> str:
         f"set month of {var} to {d.month}\n"
         f"set day of {var} to {d.day}\n"
         f"set time of {var} to 0"
+    )
+
+
+def _read_temporal_state(uuid: str) -> TemporalState | None:
+    """Re-read an item and build its TemporalState for write response feedback.
+
+    Returns None if the item cannot be found (caller handles this).
+    """
+    raw = things.get(uuid)
+    if raw is None:
+        return None
+
+    start = raw.get("start", "Anytime")
+    start_date_str = raw.get("start_date")
+    start_date = date.fromisoformat(start_date_str[:10]) if start_date_str else None
+    status = raw.get("status", "incomplete")
+    evening = bool(raw.get("evening", False))
+
+    return TemporalState(
+        start=start,
+        start_date=start_date,
+        derived_list=derive_list(start, start_date, status=status),
+        status=status,
+        evening=evening,
     )
 
 
@@ -186,6 +211,16 @@ end tell
             "Expected: today, tomorrow, evening, anytime, someday, or YYYY-MM-DD.",
         )
 
+    # Map when values to action strings
+    when_to_action = {
+        "today": "scheduled",
+        "tomorrow": "scheduled",
+        "evening": "scheduled_evening",
+        "anytime": "moved_to_anytime",
+        "someday": "moved_to_someday",
+    }
+    action = when_to_action.get(when_lower, "scheduled")
+
     # Verify write (CLAUDE.md rule 8)
     raw = things.get(uuid)
     if raw is None:
@@ -197,6 +232,8 @@ end tell
     return SuccessResponse(
         uuid=uuid,
         message=f"Scheduled item for {when}.",
+        action=action,
+        temporal_state=_read_temporal_state(uuid),
     )
 
 
@@ -329,6 +366,8 @@ end tell
     return SuccessResponse(
         uuid=new_uuid,
         message=f"Created to-do: {title}",
+        action="created",
+        temporal_state=_read_temporal_state(new_uuid),
     )
 
 
@@ -474,6 +513,8 @@ end tell
     return SuccessResponse(
         uuid=uuid,
         message=f"Updated item: {', '.join(parts)}.",
+        action="updated",
+        temporal_state=_read_temporal_state(uuid),
     )
 
 

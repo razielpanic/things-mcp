@@ -16,7 +16,7 @@ from typing import Optional
 import things
 
 from things_mcp.derivation import derive_list
-from things_mcp.models import ChecklistItem, ThingsItem
+from things_mcp.models import ChecklistItem, ItemContext, TemporalState, ThingsItem
 
 
 def _parse_date(val: str | None) -> date | None:
@@ -34,7 +34,7 @@ def _parse_datetime(val: str | None) -> datetime | None:
 
 
 def _item_from_dict(raw: dict, *, truncate_notes: bool = True) -> ThingsItem:
-    """Map a things.py dict to ThingsItem with derived_list enrichment.
+    """Map a things.py dict to ThingsItem with nested TemporalState and ItemContext.
 
     Args:
         raw: Dict returned by things.py query functions.
@@ -43,6 +43,9 @@ def _item_from_dict(raw: dict, *, truncate_notes: bool = True) -> ThingsItem:
     start = raw.get("start", "Anytime")
     start_date = _parse_date(raw.get("start_date"))
     status = raw.get("status", "incomplete")
+
+    # Evening detection: things.py may include an evening flag
+    evening = bool(raw.get("evening", False))
 
     notes = raw.get("notes")
     if truncate_notes and notes and len(notes) > 200:
@@ -57,20 +60,29 @@ def _item_from_dict(raw: dict, *, truncate_notes: bool = True) -> ThingsItem:
         for ci in checklist_raw
     ] if isinstance(checklist_raw, list) else []
 
-    return ThingsItem(
-        uuid=raw["uuid"],
-        title=raw["title"],
-        type=raw["type"],
-        status=status,
+    temporal_state = TemporalState(
         start=start,
         start_date=start_date,
-        deadline=_parse_date(raw.get("deadline")),
         derived_list=derive_list(start, start_date, status=status),
+        status=status,
+        evening=evening,
+    )
+
+    context = ItemContext(
         project_uuid=raw.get("project"),
         project_title=raw.get("project_title"),
         area_uuid=raw.get("area"),
         area_title=raw.get("area_title"),
         heading_title=raw.get("heading_title"),
+    )
+
+    return ThingsItem(
+        uuid=raw["uuid"],
+        title=raw["title"],
+        type=raw["type"],
+        temporal_state=temporal_state,
+        context=context,
+        deadline=_parse_date(raw.get("deadline")),
         tags=raw.get("tags", []),
         notes=notes,
         checklist=checklist,
