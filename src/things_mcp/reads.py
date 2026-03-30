@@ -6,16 +6,80 @@ directly. This is the fastest possible read path (<10ms).
 Every item returned includes a `derived_list` field computed by the
 derivation module. Consumers should use `derived_list` for list-related
 logic, never the raw `start` field.
-
-STUB: This module contains function signatures and docstrings only.
-Implementation will query things.py and enrich results with derived_list.
 """
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Optional
 
-from things_mcp.models import ThingsItem
+import things
+
+from things_mcp.derivation import derive_list
+from things_mcp.models import ChecklistItem, ThingsItem
+
+
+def _parse_date(val: str | None) -> date | None:
+    """Parse ISO date string from things.py, handling None and time components."""
+    if val is None:
+        return None
+    return date.fromisoformat(val[:10])
+
+
+def _parse_datetime(val: str | None) -> datetime | None:
+    """Parse ISO datetime string from things.py, handling None."""
+    if val is None:
+        return None
+    return datetime.fromisoformat(val)
+
+
+def _item_from_dict(raw: dict, *, truncate_notes: bool = True) -> ThingsItem:
+    """Map a things.py dict to ThingsItem with derived_list enrichment.
+
+    Args:
+        raw: Dict returned by things.py query functions.
+        truncate_notes: If True, truncate notes to 200 chars (for list views).
+    """
+    start = raw.get("start", "Anytime")
+    start_date = _parse_date(raw.get("start_date"))
+    status = raw.get("status", "incomplete")
+
+    notes = raw.get("notes")
+    if truncate_notes and notes and len(notes) > 200:
+        notes = notes[:200]
+
+    checklist_raw = raw.get("checklist", [])
+    checklist = [
+        ChecklistItem(
+            title=ci["title"],
+            completed=(ci.get("status") == "completed"),
+        )
+        for ci in checklist_raw
+    ] if isinstance(checklist_raw, list) else []
+
+    return ThingsItem(
+        uuid=raw["uuid"],
+        title=raw["title"],
+        type=raw["type"],
+        status=status,
+        start=start,
+        start_date=start_date,
+        deadline=_parse_date(raw.get("deadline")),
+        derived_list=derive_list(start, start_date, status=status),
+        project_uuid=raw.get("project"),
+        project_title=raw.get("project_title"),
+        area_uuid=raw.get("area"),
+        area_title=raw.get("area_title"),
+        heading_title=raw.get("heading_title"),
+        tags=raw.get("tags", []),
+        notes=notes,
+        checklist=checklist,
+        created=_parse_datetime(raw.get("created")),
+        modified=_parse_datetime(raw.get("modified")),
+        completed_date=_parse_datetime(raw.get("stop_date")),
+        today_index=raw.get("today_index"),
+        index=raw.get("index"),
+    )
 
 
 def get_inbox(*, limit: int = 50) -> list[ThingsItem]:
@@ -24,16 +88,18 @@ def get_inbox(*, limit: int = 50) -> list[ThingsItem]:
     These are items with start=Inbox (database value 0). They have not
     been triaged into Anytime/Someday yet.
     """
-    raise NotImplementedError("TODO: Query things.todos(start='Inbox')")
+    raw_items = things.inbox()[:limit]
+    return [_item_from_dict(r) for r in raw_items]
 
 
 def get_today(*, limit: int = 50) -> list[ThingsItem]:
     """Get items scheduled for today.
 
-    These are items where start_date <= today, regardless of the start flag.
-    An item with start=Someday but start_date=today IS in Today.
+    Uses things.today() which handles the three-query union correctly:
+    regular today tasks, unconfirmed scheduled tasks, and overdue deadline tasks.
     """
-    raise NotImplementedError("TODO: Query things.today()")
+    raw_items = things.today()[:limit]
+    return [_item_from_dict(r) for r in raw_items]
 
 
 def get_upcoming(*, limit: int = 50, days_ahead: int = 30) -> list[ThingsItem]:
@@ -42,7 +108,8 @@ def get_upcoming(*, limit: int = 50, days_ahead: int = 30) -> list[ThingsItem]:
     These are items where start_date > today. They will auto-promote to
     Today when their start_date arrives.
     """
-    raise NotImplementedError("TODO: Query things.upcoming()")
+    raw_items = things.upcoming()[:limit]
+    return [_item_from_dict(r) for r in raw_items]
 
 
 def get_anytime(*, limit: int = 50) -> list[ThingsItem]:
@@ -52,7 +119,8 @@ def get_anytime(*, limit: int = 50) -> list[ThingsItem]:
     This is the default state for processed items -- Anytime means
     "available for work whenever."
     """
-    raise NotImplementedError("TODO: Query things.anytime()")
+    raw_items = things.anytime()[:limit]
+    return [_item_from_dict(r) for r in raw_items]
 
 
 def get_someday(*, limit: int = 50) -> list[ThingsItem]:
@@ -61,7 +129,8 @@ def get_someday(*, limit: int = 50) -> list[ThingsItem]:
     These are items where start=Someday and start_date is null.
     Someday means "not now, maybe later."
     """
-    raise NotImplementedError("TODO: Query things.someday()")
+    raw_items = things.someday()[:limit]
+    return [_item_from_dict(r) for r in raw_items]
 
 
 def get_logbook(*, limit: int = 50, period: str = "7d") -> list[ThingsItem]:
@@ -77,9 +146,21 @@ def get_item(*, uuid: str) -> Optional[ThingsItem]:
     """Get a single item by UUID with full detail.
 
     Returns None if the item does not exist. Notes are returned in full
-    (not truncated like list views).
+    (not truncated like list views). Checklist items are fetched separately.
     """
-    raise NotImplementedError("TODO: Query things.todos(uuid=uuid)")
+    raw = things.get(uuid)
+    if raw is None:
+        return None
+
+    # Fetch checklist items separately for complete detail
+    try:
+        checklist_items = things.checklist_items(uuid)
+        if isinstance(checklist_items, list):
+            raw["checklist"] = checklist_items
+    except Exception:
+        pass
+
+    return _item_from_dict(raw, truncate_notes=False)
 
 
 def search(*, query: str, limit: int = 50) -> list[ThingsItem]:
