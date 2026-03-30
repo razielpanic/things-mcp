@@ -271,12 +271,16 @@ def create_todo(
     The `when` parameter accepts: today, tomorrow, evening, anytime,
     someday, or YYYY-MM-DD. See models.WhenValue for semantics.
     """
-    # Phase 2: checklist items require URL scheme
+    # Checklist requires auth token for URL scheme update -- check early
+    # so we don't create a todo then fail to add its checklist
     if checklist_items:
-        return ErrorResponse(
-            error="NOT_IMPLEMENTED",
-            message="Checklist creation requires URL scheme (Phase 2).",
-        )
+        token = things.token()
+        if token is None:
+            return ErrorResponse(
+                error="NO_AUTH_TOKEN",
+                message="Checklist creation requires auth token. "
+                "Enable Things URLs in Things > Settings > General.",
+            )
 
     # Validate UUIDs if provided
     if project_uuid is not None:
@@ -369,6 +373,29 @@ end tell
         if not schedule_result.success:
             return schedule_result
 
+    # Append checklist items via URL scheme update (requires auth, checked above)
+    checklist_warning = None
+    if checklist_items:
+        checklist_json = json.dumps(
+            [{"title": item, "completed": False} for item in checklist_items]
+        )
+        url = (
+            f"things:///update?id={new_uuid}"
+            f"&append-checklist-items={urllib.parse.quote(checklist_json)}"
+            f"&auth-token={token}"
+        )
+        subprocess.run(["open", url], capture_output=True, timeout=10)
+        time.sleep(0.5)  # URL scheme is fire-and-forget
+
+        # Verify checklist was added
+        raw_check = things.get(new_uuid)
+        if raw_check is not None:
+            checklist = raw_check.get("checklist", [])
+            if not checklist:
+                checklist_warning = (
+                    " Warning: checklist items may not have been added."
+                )
+
     # Verify creation (CLAUDE.md rule 8)
     raw = things.get(new_uuid)
     if raw is None:
@@ -377,9 +404,15 @@ end tell
             message="To-do not found after creation.",
         )
 
+    message = f"Created to-do: {title}"
+    if checklist_items:
+        message += f" (with {len(checklist_items)} checklist items)"
+    if checklist_warning:
+        message += checklist_warning
+
     return SuccessResponse(
         uuid=new_uuid,
-        message=f"Created to-do: {title}",
+        message=message,
         action="created",
         temporal_state=_read_temporal_state(new_uuid),
     )
