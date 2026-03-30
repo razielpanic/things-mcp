@@ -151,7 +151,8 @@ def get_logbook(*, limit: int = 50, period: str = "7d") -> list[ThingsItem]:
     Items are in Logbook when status is completed or canceled,
     regardless of start flag or start_date.
     """
-    raise NotImplementedError("TODO: Query things.logbook()")
+    raw_items = things.logbook(last=period)[:limit]
+    return [_item_from_dict(r) for r in raw_items]
 
 
 def get_item(*, uuid: str) -> Optional[ThingsItem]:
