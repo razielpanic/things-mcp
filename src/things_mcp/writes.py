@@ -666,7 +666,55 @@ def move_to_context(
     This changes the structural context (where it lives), not the temporal
     placement (when to work on it). Use schedule_item for temporal moves.
     """
-    raise NotImplementedError("TODO: AppleScript set project / move to area")
+    _validate_uuid(uuid)
+
+    if project_uuid is None and area_uuid is None:
+        return ErrorResponse(
+            error="INVALID_INPUT",
+            message="Provide either project_uuid or area_uuid.",
+        )
+
+    if project_uuid is not None and area_uuid is not None:
+        return ErrorResponse(
+            error="INVALID_INPUT",
+            message="Provide project_uuid or area_uuid, not both.",
+        )
+
+    if project_uuid is not None:
+        _validate_uuid(project_uuid)
+        script = f'''
+tell application "Things3"
+    set theToDo to to do id "{uuid}"
+    set project of theToDo to project id "{project_uuid}"
+end tell
+'''
+        action = "moved_to_project"
+    else:
+        _validate_uuid(area_uuid)
+        script = f'''
+tell application "Things3"
+    set theToDo to to do id "{uuid}"
+    set area of theToDo to area id "{area_uuid}"
+end tell
+'''
+        action = "moved_to_area"
+
+    run_applescript(script)
+
+    # Verify write (CLAUDE.md rule 8) -- AppleScript is synchronous, no delay
+    raw = things.get(uuid)
+    if raw is None:
+        return ErrorResponse(
+            error="VERIFY_FAILED",
+            message="Item not found after move.",
+        )
+
+    return SuccessResponse(
+        uuid=uuid,
+        message=f"Item {action.replace('_', ' ')}.",
+        action=action,
+        temporal_state=_read_temporal_state(uuid),
+    )
 
 
 def delete_item(*, uuid: str) -> SuccessResponse | ErrorResponse:
