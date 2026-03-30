@@ -215,7 +215,13 @@ def get_projects(*, include_items: bool = False) -> list[ThingsItem]:
     If include_items is True, also returns the to-dos within each project
     (queried separately by project UUID to avoid the upstream empty bug).
     """
-    raise NotImplementedError("TODO: Query things.projects()")
+    raw_projects = things.projects()
+    projects = [_item_from_dict(r) for r in raw_projects]
+    if include_items:
+        for proj in projects:
+            raw_children = things.tasks(project=proj.uuid)
+            proj.items = [_item_from_dict(r) for r in raw_children]
+    return projects
 
 
 def get_areas(*, include_items: bool = False) -> list[dict]:
