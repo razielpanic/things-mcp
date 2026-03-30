@@ -6,9 +6,6 @@ derived from `start` + `start_date`.
 
 Read path: things.py (SQLite) -> derivation -> response
 Write path: AppleScript (scheduling/moves) + URL scheme (checklists)
-
-STUB: Tool definitions with correct signatures and docstrings.
-Handlers call into reads.py and writes.py (also stubs).
 """
 
 from __future__ import annotations
@@ -17,9 +14,12 @@ from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 
+from things_mcp import reads, writes
+from things_mcp.models import ErrorResponse
+
 mcp = FastMCP(
     "things-mcp",
-    description="Things 3 MCP server with correct data model semantics",
+    instructions="Things 3 MCP server with correct data model semantics",
 )
 
 
@@ -37,7 +37,11 @@ async def get_inbox(limit: int = 50) -> dict:
 
     Returns items with derived_list="Inbox".
     """
-    return {"error": "NOT_IMPLEMENTED", "message": "Stub -- reads.py not wired up yet"}
+    try:
+        items = reads.get_inbox(limit=limit)
+        return {"items": [item.model_dump() for item in items], "count": len(items)}
+    except Exception as e:
+        return ErrorResponse(error="READ_ERROR", message=str(e)).model_dump()
 
 
 @mcp.tool()
@@ -50,7 +54,11 @@ async def get_today(limit: int = 50) -> dict:
 
     Returns items with derived_list="Today".
     """
-    return {"error": "NOT_IMPLEMENTED", "message": "Stub -- reads.py not wired up yet"}
+    try:
+        items = reads.get_today(limit=limit)
+        return {"items": [item.model_dump() for item in items], "count": len(items)}
+    except Exception as e:
+        return ErrorResponse(error="READ_ERROR", message=str(e)).model_dump()
 
 
 @mcp.tool()
@@ -62,7 +70,11 @@ async def get_upcoming(limit: int = 50, days_ahead: int = 30) -> dict:
 
     Returns items with derived_list="Upcoming".
     """
-    return {"error": "NOT_IMPLEMENTED", "message": "Stub -- reads.py not wired up yet"}
+    try:
+        items = reads.get_upcoming(limit=limit, days_ahead=days_ahead)
+        return {"items": [item.model_dump() for item in items], "count": len(items)}
+    except Exception as e:
+        return ErrorResponse(error="READ_ERROR", message=str(e)).model_dump()
 
 
 @mcp.tool()
@@ -75,7 +87,11 @@ async def get_anytime(limit: int = 50) -> dict:
 
     Returns items with derived_list="Anytime".
     """
-    return {"error": "NOT_IMPLEMENTED", "message": "Stub -- reads.py not wired up yet"}
+    try:
+        items = reads.get_anytime(limit=limit)
+        return {"items": [item.model_dump() for item in items], "count": len(items)}
+    except Exception as e:
+        return ErrorResponse(error="READ_ERROR", message=str(e)).model_dump()
 
 
 @mcp.tool()
@@ -87,7 +103,11 @@ async def get_someday(limit: int = 50) -> dict:
 
     Returns items with derived_list="Someday".
     """
-    return {"error": "NOT_IMPLEMENTED", "message": "Stub -- reads.py not wired up yet"}
+    try:
+        items = reads.get_someday(limit=limit)
+        return {"items": [item.model_dump() for item in items], "count": len(items)}
+    except Exception as e:
+        return ErrorResponse(error="READ_ERROR", message=str(e)).model_dump()
 
 
 @mcp.tool()
@@ -101,7 +121,11 @@ async def get_logbook(limit: int = 50, period: str = "7d") -> dict:
         limit: Max items to return.
         period: How far back to look (e.g. "7d", "30d", "1y").
     """
-    return {"error": "NOT_IMPLEMENTED", "message": "Stub -- reads.py not wired up yet"}
+    try:
+        items = reads.get_logbook(limit=limit, period=period)
+        return {"items": [item.model_dump() for item in items], "count": len(items)}
+    except Exception as e:
+        return ErrorResponse(error="READ_ERROR", message=str(e)).model_dump()
 
 
 @mcp.tool()
@@ -112,7 +136,13 @@ async def get_item(uuid: str) -> dict:
     checklist items, and all metadata. The derived_list field shows
     which list this item actually appears in.
     """
-    return {"error": "NOT_IMPLEMENTED", "message": "Stub -- reads.py not wired up yet"}
+    try:
+        item = reads.get_item(uuid=uuid)
+        if item is None:
+            return ErrorResponse(error="NOT_FOUND", message=f"No item with UUID {uuid}").model_dump()
+        return item.model_dump()
+    except Exception as e:
+        return ErrorResponse(error="READ_ERROR", message=str(e)).model_dump()
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +221,23 @@ async def create_todo(
         checklist_items: Newline-separated checklist items. Uses URL scheme
             when present (only way to create checklists).
     """
-    return {"error": "NOT_IMPLEMENTED", "message": "Stub -- writes.py not wired up yet"}
+    try:
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+        cl_list = [c.strip() for c in checklist_items.split("\n") if c.strip()] if checklist_items else None
+        result = writes.create_todo(
+            title=title,
+            notes=notes,
+            when=when,
+            deadline=deadline,
+            tags=tag_list,
+            project_uuid=project_uuid,
+            area_uuid=area_uuid,
+            heading=heading,
+            checklist_items=cl_list,
+        )
+        return result.model_dump()
+    except Exception as e:
+        return ErrorResponse(error="WRITE_ERROR", message=str(e)).model_dump()
 
 
 @mcp.tool()
@@ -244,7 +290,20 @@ async def update_item(
         completed: Set to true to mark complete. Moves to Logbook.
         canceled: Set to true to cancel. Moves to Logbook.
     """
-    return {"error": "NOT_IMPLEMENTED", "message": "Stub -- writes.py not wired up yet"}
+    try:
+        result = writes.update_item(
+            uuid=uuid,
+            title=title,
+            notes=notes,
+            when=when,
+            deadline=deadline,
+            tags=tags,
+            completed=completed,
+            canceled=canceled,
+        )
+        return result.model_dump()
+    except Exception as e:
+        return ErrorResponse(error="WRITE_ERROR", message=str(e)).model_dump()
 
 
 @mcp.tool()
@@ -262,7 +321,11 @@ async def schedule_item(uuid: str, when: str) -> dict:
     CRITICAL: "anytime" clears the start_date and sets start=Anytime.
     It does NOT map to Someday. This was the root bug in the previous MCP.
     """
-    return {"error": "NOT_IMPLEMENTED", "message": "Stub -- writes.py not wired up yet"}
+    try:
+        result = writes.schedule_item(uuid=uuid, when=when)
+        return result.model_dump()
+    except Exception as e:
+        return ErrorResponse(error="WRITE_ERROR", message=str(e)).model_dump()
 
 
 @mcp.tool()
