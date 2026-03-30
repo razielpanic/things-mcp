@@ -176,12 +176,36 @@ def get_item(*, uuid: str) -> Optional[ThingsItem]:
     return _item_from_dict(raw, truncate_notes=False)
 
 
-def search(*, query: str, limit: int = 50) -> list[ThingsItem]:
+def search(
+    *,
+    query: str,
+    project: str | None = None,
+    area: str | None = None,
+    tag: str | None = None,
+    start_date: str | None = None,
+    deadline: str | None = None,
+    include_completed: bool = False,
+    limit: int = 50,
+) -> list[ThingsItem]:
     """Search items by title and notes text.
 
     Searches across all items regardless of list placement.
     """
-    raise NotImplementedError("TODO: Query things.todos(search_query=query)")
+    kwargs: dict = {}
+    if project is not None:
+        kwargs["project"] = project
+    if area is not None:
+        kwargs["area"] = area
+    if tag is not None:
+        kwargs["tag"] = tag
+    if start_date is not None:
+        kwargs["start_date"] = start_date
+    if deadline is not None:
+        kwargs["deadline"] = deadline
+    if include_completed:
+        kwargs["status"] = None  # None = any status in things.py
+    raw_items = things.tasks(search_query=query, **kwargs)[:limit]
+    return [_item_from_dict(r) for r in raw_items]
 
 
 def get_projects(*, include_items: bool = False) -> list[ThingsItem]:
