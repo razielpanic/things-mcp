@@ -16,7 +16,7 @@ from typing import Optional
 import things
 
 from things_mcp.derivation import derive_list
-from things_mcp.models import ChecklistItem, ItemContext, TemporalState, ThingsItem
+from things_mcp.models import AreaItem, ChecklistItem, ItemContext, TemporalState, ThingsItem
 
 
 def _parse_date(val: str | None) -> date | None:
@@ -224,10 +224,25 @@ def get_projects(*, include_items: bool = False) -> list[ThingsItem]:
     return projects
 
 
-def get_areas(*, include_items: bool = False) -> list[dict]:
+def _area_from_dict(raw: dict) -> AreaItem:
+    """Map a things.py area dict to AreaItem (no temporal state)."""
+    return AreaItem(
+        uuid=raw["uuid"],
+        title=raw.get("title", ""),
+        tags=raw.get("tags", []),
+    )
+
+
+def get_areas(*, include_items: bool = False) -> list[AreaItem]:
     """Get all areas with metadata.
 
     Areas are ongoing, never-completed containers. They hold projects
     and loose to-dos.
     """
-    raise NotImplementedError("TODO: Query things.areas()")
+    raw_areas = things.areas()
+    areas = [_area_from_dict(r) for r in raw_areas]
+    if include_items:
+        for area in areas:
+            raw_children = things.tasks(area=area.uuid)
+            area.items = [_item_from_dict(r) for r in raw_children]
+    return areas
