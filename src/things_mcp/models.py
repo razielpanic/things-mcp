@@ -15,7 +15,7 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ItemType(str, Enum):
@@ -89,35 +89,56 @@ class ChecklistItem(BaseModel):
     completed: bool = False
 
 
-class ThingsItem(BaseModel):
-    """A Things 3 item (to-do, project, or heading) with derived list.
+class TemporalState(BaseModel):
+    """Temporal placement state for a Things item.
 
-    Every response from this MCP includes `derived_list` -- the computed
-    actual list the item appears in. Consumers should use `derived_list`
-    for all list-related logic, never the raw `start` field.
+    Groups the fields that drive list derivation: the sticky start flag,
+    optional start_date, the computed derived_list, item status, and the
+    evening flag (a visual sub-section of Today, not a separate list).
     """
 
-    uuid: str
-    title: str
-    type: ItemType
-    status: ItemStatus = ItemStatus.INCOMPLETE
+    model_config = ConfigDict(use_enum_values=True)
 
-    # The sticky start flag -- NOT the current list
     start: StartFlag = StartFlag.ANYTIME
-
-    # Temporal fields that drive list derivation
     start_date: Optional[date] = None
-    deadline: Optional[date] = None
-
-    # THE KEY FIELD: computed from start + start_date
     derived_list: DerivedList
+    status: ItemStatus = ItemStatus.INCOMPLETE
+    evening: bool = False
 
-    # Context hierarchy
+
+class ItemContext(BaseModel):
+    """Structural context for a Things item (project, area, heading).
+
+    Represents the item's position in Things' structural hierarchy,
+    orthogonal to its temporal placement.
+    """
+
+    model_config = ConfigDict(use_enum_values=True)
+
     project_uuid: Optional[str] = None
     project_title: Optional[str] = None
     area_uuid: Optional[str] = None
     area_title: Optional[str] = None
     heading_title: Optional[str] = None
+
+
+class ThingsItem(BaseModel):
+    """A Things 3 item (to-do, project, or heading) with derived list.
+
+    Every response from this MCP includes `derived_list` inside
+    `temporal_state` -- the computed actual list the item appears in.
+    Consumers should use `temporal_state.derived_list` for all
+    list-related logic, never the raw `start` field.
+    """
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    uuid: str
+    title: str
+    type: ItemType
+    temporal_state: TemporalState
+    context: ItemContext = Field(default_factory=ItemContext)
+    deadline: Optional[date] = None
 
     # Content
     tags: list[str] = Field(default_factory=list)
@@ -134,6 +155,19 @@ class ThingsItem(BaseModel):
     index: Optional[int] = None
 
 
+class ViewResponse(BaseModel):
+    """Self-describing wrapper for list-level responses.
+
+    Every list query returns this wrapper so the LLM agent sees
+    the CC concept explanation alongside the items.
+    """
+
+    view: str
+    description: str
+    items: list[ThingsItem]
+    count: int
+
+
 class ErrorResponse(BaseModel):
     """Standard error response."""
 
@@ -143,8 +177,16 @@ class ErrorResponse(BaseModel):
 
 
 class SuccessResponse(BaseModel):
-    """Standard success response for write operations."""
+    """Standard success response for write operations.
+
+    Includes the item's post-write temporal_state so the agent sees
+    the state transition without needing a follow-up get_item call.
+    """
+
+    model_config = ConfigDict(use_enum_values=True)
 
     success: bool = True
     uuid: Optional[str] = None
     message: str = ""
+    action: Optional[str] = None
+    temporal_state: Optional[TemporalState] = None
