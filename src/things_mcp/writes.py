@@ -25,11 +25,8 @@ import things
 
 from things_mcp.models import ErrorResponse, SuccessResponse
 
-# Things 3 UUIDs are uppercase hex with dashes
-_UUID_RE = re.compile(
-    r"^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$",
-    re.IGNORECASE,
-)
+# Things 3 uses 22-char base62 identifiers (alphanumeric, no dashes)
+_UUID_RE = re.compile(r"^[A-Za-z0-9]{22}$")
 
 # Date pattern for YYYY-MM-DD when values
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
