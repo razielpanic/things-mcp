@@ -219,32 +219,46 @@ async def search(query: str, limit: int = 50) -> dict:
 
 @mcp.tool()
 async def get_projects(include_items: bool = False) -> dict:
-    """Get all projects.
+    """List all active projects.
 
-    Projects are structural containers (context axis), not temporal placements.
-    A project has its own temporal_state -- it can be in Today, Upcoming, Anytime,
-    or Someday independent of its to-dos' placements.
+    Projects are containers with their own temporal placement. Each project
+    has start, start_date, and derived_list like any other item.
 
-    Args:
-        include_items: If true, also returns to-dos within each project.
-            Projects are queried individually by UUID to avoid the upstream
-            empty-response bug with bulk include.
+    Set include_items=True to include each project's child to-dos. This uses
+    per-project queries to avoid the upstream bulk response bug.
     """
-    return {"error": "NOT_IMPLEMENTED", "message": "Stub -- reads.py not wired up yet"}
+    try:
+        items = reads.get_projects(include_items=include_items)
+        return {
+            "view": "Projects",
+            "description": "All active projects with temporal placement",
+            "items": [item.model_dump() for item in items],
+            "count": len(items),
+        }
+    except Exception as e:
+        return ErrorResponse(error="READ_ERROR", message=str(e)).model_dump()
 
 
 @mcp.tool()
 async def get_areas(include_items: bool = False) -> dict:
-    """Get all areas.
+    """List all areas of responsibility.
 
-    Areas are permanent structural containers that never complete. They hold
-    projects and loose to-dos. Areas have no temporal placement -- they exist
-    on the structural axis only.
+    Areas are permanent structural containers -- they have NO temporal
+    placement (no start, start_date, or derived_list). They organize
+    projects and loose to-dos.
 
-    Args:
-        include_items: If true, also returns projects and loose to-dos.
+    Set include_items=True to include each area's child items.
     """
-    return {"error": "NOT_IMPLEMENTED", "message": "Stub -- reads.py not wired up yet"}
+    try:
+        items = reads.get_areas(include_items=include_items)
+        return {
+            "view": "Areas",
+            "description": "All areas of responsibility",
+            "items": [item.model_dump() for item in items],
+            "count": len(items),
+        }
+    except Exception as e:
+        return ErrorResponse(error="READ_ERROR", message=str(e)).model_dump()
 
 
 # ---------------------------------------------------------------------------
