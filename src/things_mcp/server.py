@@ -346,7 +346,21 @@ async def create_project(
         area_uuid: UUID of parent area (structural context).
         todos: Newline-separated initial to-do titles.
     """
-    return {"error": "NOT_IMPLEMENTED", "message": "Stub -- writes.py not wired up yet"}
+    try:
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+        todo_list = [t.strip() for t in todos.split("\n") if t.strip()] if todos else None
+        result = writes.create_project(
+            title=title,
+            notes=notes,
+            when=when,
+            deadline=deadline,
+            tags=tag_list,
+            area_uuid=area_uuid,
+            todos=todo_list,
+        )
+        return result.model_dump()
+    except Exception as e:
+        return ErrorResponse(error="WRITE_ERROR", message=str(e)).model_dump()
 
 
 @mcp.tool()
@@ -433,18 +447,29 @@ async def move_to_context(
         project_uuid: Target project UUID, or None.
         area_uuid: Target area UUID (used only if project_uuid is None).
     """
-    return {"error": "NOT_IMPLEMENTED", "message": "Stub -- writes.py not wired up yet"}
+    try:
+        result = writes.move_to_context(
+            uuid=uuid,
+            project_uuid=project_uuid,
+            area_uuid=area_uuid,
+        )
+        return result.model_dump()
+    except Exception as e:
+        return ErrorResponse(error="WRITE_ERROR", message=str(e)).model_dump()
 
 
 @mcp.tool()
 async def delete_item(uuid: str) -> dict:
-    """Move an item to Trash, making it invisible to all computed views.
+    """Move an item to Trash in Things 3.
 
-    Requires a valid auth token in ~/.things-auth. Will verify the token
-    exists before attempting the operation, and confirm the item was
-    actually trashed afterward.
+    This is a recoverable operation -- the item moves to Things' Trash,
+    not permanent deletion. Uses AppleScript (no auth token needed).
     """
-    return {"error": "NOT_IMPLEMENTED", "message": "Stub -- writes.py not wired up yet"}
+    try:
+        result = writes.delete_item(uuid=uuid)
+        return result.model_dump()
+    except Exception as e:
+        return ErrorResponse(error="WRITE_ERROR", message=str(e)).model_dump()
 
 
 # ---------------------------------------------------------------------------
