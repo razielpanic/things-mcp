@@ -199,22 +199,44 @@ async def get_item(uuid: str) -> dict:
 
 
 @mcp.tool()
-async def search(query: str, limit: int = 50) -> dict:
-    """Search items by title and notes text across all temporal lists and statuses.
+async def search(
+    query: str,
+    project: str = "",
+    area: str = "",
+    tag: str = "",
+    start_date: str = "",
+    deadline: str = "",
+    include_completed: bool = False,
+    limit: int = 50,
+) -> dict:
+    """Search items by text with optional structured filters.
 
-    Results span every computed view (Inbox, Today, Upcoming, Anytime, Someday,
-    Logbook). Each match includes temporal_state showing its current list
-    placement derived from start + start_date + status.
+    Searches titles and notes. Active items only by default --
+    set include_completed=True for all statuses.
+
+    Filter by organizational context (project UUID, area UUID, tag name)
+    or temporal fields (start_date, deadline). Date filters accept:
+    'future', 'past', or '[operator]YYYY-MM-DD' (e.g., '>2024-01-01').
     """
-    # TODO: Wire up reads.search when implemented
-    return {
-        "view": "Search",
-        "description": f"Items matching '{query}' across all lists and statuses.",
-        "items": [],
-        "count": 0,
-        "error": "NOT_IMPLEMENTED",
-        "message": "Stub -- reads.py not wired up yet",
-    }
+    try:
+        items = reads.search(
+            query=query,
+            project=project or None,
+            area=area or None,
+            tag=tag or None,
+            start_date=start_date or None,
+            deadline=deadline or None,
+            include_completed=include_completed,
+            limit=limit,
+        )
+        return {
+            "view": "Search",
+            "description": f"Search results for '{query}'",
+            "items": [item.model_dump() for item in items],
+            "count": len(items),
+        }
+    except Exception as e:
+        return ErrorResponse(error="READ_ERROR", message=str(e)).model_dump()
 
 
 @mcp.tool()
