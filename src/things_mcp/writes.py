@@ -461,7 +461,7 @@ def create_project(
         params["to-dos"] = json.dumps([{"title": t} for t in todos], separators=(",", ":"))
 
         url = "things:///add-project?" + urllib.parse.urlencode(
-            params, quote_via=lambda s, safe="": urllib.parse.quote(s, safe="")
+            params, quote_via=lambda s, safe="", encoding=None, errors=None: urllib.parse.quote(s, safe="")
         )
         subprocess.run(["open", url], capture_output=True, timeout=10)
 
