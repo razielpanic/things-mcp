@@ -377,11 +377,12 @@ end tell
     checklist_warning = None
     if checklist_items:
         checklist_json = json.dumps(
-            [{"title": item, "completed": False} for item in checklist_items]
+            [{"title": item, "completed": False} for item in checklist_items],
+            separators=(",", ":"),
         )
         url = (
             f"things:///update?id={new_uuid}"
-            f"&append-checklist-items={urllib.parse.quote(checklist_json)}"
+            f"&append-checklist-items={urllib.parse.quote(checklist_json, safe='')}"
             f"&auth-token={token}"
         )
         subprocess.run(["open", url], capture_output=True, timeout=10)
