@@ -40,6 +40,17 @@ def _item_from_dict(raw: dict, *, truncate_notes: bool = True) -> ThingsItem:
         raw: Dict returned by things.py query functions.
         truncate_notes: If True, truncate notes to 200 chars (for list views).
     """
+    # Validate required fields — raise ValueError instead of KeyError
+    uuid = raw.get("uuid")
+    if uuid is None:
+        raise ValueError("Missing required field 'uuid' in Things item data")
+    title = raw.get("title")
+    if title is None:
+        raise ValueError("Missing required field 'title' in Things item data")
+    item_type = raw.get("type")
+    if item_type is None:
+        raise ValueError("Missing required field 'type' in Things item data")
+
     start = raw.get("start", "Anytime")
     start_date = _parse_date(raw.get("start_date"))
     status = raw.get("status", "incomplete")
@@ -77,9 +88,9 @@ def _item_from_dict(raw: dict, *, truncate_notes: bool = True) -> ThingsItem:
     )
 
     return ThingsItem(
-        uuid=raw["uuid"],
-        title=raw["title"],
-        type=raw["type"],
+        uuid=uuid,
+        title=title,
+        type=item_type,
         temporal_state=temporal_state,
         context=context,
         deadline=_parse_date(raw.get("deadline")),
@@ -226,8 +237,11 @@ def get_projects(*, include_items: bool = False) -> list[ThingsItem]:
 
 def _area_from_dict(raw: dict) -> AreaItem:
     """Map a things.py area dict to AreaItem (no temporal state)."""
+    uuid = raw.get("uuid")
+    if uuid is None:
+        raise ValueError("Missing required field 'uuid' in Things area data")
     return AreaItem(
-        uuid=raw["uuid"],
+        uuid=uuid,
         title=raw.get("title", ""),
         tags=raw.get("tags", []),
     )
