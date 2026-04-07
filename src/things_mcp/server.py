@@ -349,7 +349,7 @@ async def create_project(
     deadline: Optional[str] = None,
     tags: Optional[str] = None,
     area_uuid: Optional[str] = None,
-    todos: Optional[str] = None,
+    todos: Optional[list[str]] = None,
 ) -> dict:
     """Create a new structural container (project) in Things 3.
 
@@ -366,11 +366,11 @@ async def create_project(
         deadline: Project deadline.
         tags: Comma-separated tags.
         area_uuid: UUID of parent area (structural context).
-        todos: Newline-separated initial to-do titles.
+        todos: List of initial to-do titles.
     """
     try:
         tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
-        todo_list = [t.strip() for t in todos.split("\n") if t.strip()] if todos else None
+        todo_list = [t.strip() for t in todos if t.strip()] if todos else None
         result = writes.create_project(
             title=title,
             notes=notes,
