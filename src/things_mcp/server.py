@@ -14,12 +14,17 @@ Write path: AppleScript (scheduling/moves) + URL scheme (checklists)
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 
 from things_mcp import reads, writes
 from things_mcp.models import ErrorResponse
+
+_THINGS_UNAVAILABLE_MSG = (
+    "Things 3 database is not accessible. Is Things 3 installed?"
+)
 
 mcp = FastMCP(
     "things-mcp",
@@ -58,6 +63,8 @@ async def get_inbox(limit: int = 50) -> dict:
             "items": [item.model_dump() for item in items],
             "count": len(items),
         }
+    except sqlite3.OperationalError:
+        return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
     except Exception as e:
         return ErrorResponse(error="READ_ERROR", message=str(e)).model_dump()
 
@@ -81,6 +88,8 @@ async def get_today(limit: int = 50) -> dict:
             "items": [item.model_dump() for item in items],
             "count": len(items),
         }
+    except sqlite3.OperationalError:
+        return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
     except Exception as e:
         return ErrorResponse(error="READ_ERROR", message=str(e)).model_dump()
 
@@ -103,6 +112,8 @@ async def get_upcoming(limit: int = 50, days_ahead: int = 30) -> dict:
             "items": [item.model_dump() for item in items],
             "count": len(items),
         }
+    except sqlite3.OperationalError:
+        return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
     except Exception as e:
         return ErrorResponse(error="READ_ERROR", message=str(e)).model_dump()
 
@@ -125,6 +136,8 @@ async def get_anytime(limit: int = 50) -> dict:
             "items": [item.model_dump() for item in items],
             "count": len(items),
         }
+    except sqlite3.OperationalError:
+        return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
     except Exception as e:
         return ErrorResponse(error="READ_ERROR", message=str(e)).model_dump()
 
@@ -147,6 +160,8 @@ async def get_someday(limit: int = 50) -> dict:
             "items": [item.model_dump() for item in items],
             "count": len(items),
         }
+    except sqlite3.OperationalError:
+        return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
     except Exception as e:
         return ErrorResponse(error="READ_ERROR", message=str(e)).model_dump()
 
@@ -171,6 +186,8 @@ async def get_logbook(limit: int = 50, period: str = "7d") -> dict:
             "items": [item.model_dump() for item in items],
             "count": len(items),
         }
+    except sqlite3.OperationalError:
+        return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
     except Exception as e:
         return ErrorResponse(error="READ_ERROR", message=str(e)).model_dump()
 
@@ -189,6 +206,8 @@ async def get_item(uuid: str) -> dict:
         if item is None:
             return ErrorResponse(error="NOT_FOUND", message=f"No item with UUID {uuid}").model_dump()
         return item.model_dump()
+    except sqlite3.OperationalError:
+        return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
     except Exception as e:
         return ErrorResponse(error="READ_ERROR", message=str(e)).model_dump()
 
@@ -235,6 +254,8 @@ async def search(
             "items": [item.model_dump() for item in items],
             "count": len(items),
         }
+    except sqlite3.OperationalError:
+        return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
     except Exception as e:
         return ErrorResponse(error="READ_ERROR", message=str(e)).model_dump()
 
@@ -257,6 +278,8 @@ async def get_projects(include_items: bool = False) -> dict:
             "items": [item.model_dump() for item in items],
             "count": len(items),
         }
+    except sqlite3.OperationalError:
+        return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
     except Exception as e:
         return ErrorResponse(error="READ_ERROR", message=str(e)).model_dump()
 
@@ -279,6 +302,8 @@ async def get_areas(include_items: bool = False) -> dict:
             "items": [item.model_dump() for item in items],
             "count": len(items),
         }
+    except sqlite3.OperationalError:
+        return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
     except Exception as e:
         return ErrorResponse(error="READ_ERROR", message=str(e)).model_dump()
 
@@ -342,6 +367,8 @@ async def create_todo(
             checklist_items=cl_list,
         )
         return result.model_dump()
+    except sqlite3.OperationalError:
+        return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
     except Exception as e:
         return ErrorResponse(error="WRITE_ERROR", message=str(e)).model_dump()
 
@@ -391,6 +418,8 @@ async def create_project(
             todos=todo_list,
         )
         return result.model_dump()
+    except sqlite3.OperationalError:
+        return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
     except Exception as e:
         return ErrorResponse(error="WRITE_ERROR", message=str(e)).model_dump()
 
@@ -436,6 +465,8 @@ async def update_item(
             canceled=canceled,
         )
         return result.model_dump()
+    except sqlite3.OperationalError:
+        return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
     except Exception as e:
         return ErrorResponse(error="WRITE_ERROR", message=str(e)).model_dump()
 
@@ -457,6 +488,8 @@ async def schedule_item(uuid: str, when: str) -> dict:
     try:
         result = writes.schedule_item(uuid=uuid, when=when)
         return result.model_dump()
+    except sqlite3.OperationalError:
+        return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
     except Exception as e:
         return ErrorResponse(error="WRITE_ERROR", message=str(e)).model_dump()
 
@@ -486,6 +519,8 @@ async def move_to_context(
             area_uuid=area_uuid,
         )
         return result.model_dump()
+    except sqlite3.OperationalError:
+        return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
     except Exception as e:
         return ErrorResponse(error="WRITE_ERROR", message=str(e)).model_dump()
 
@@ -500,6 +535,8 @@ async def delete_item(uuid: str) -> dict:
     try:
         result = writes.delete_item(uuid=uuid)
         return result.model_dump()
+    except sqlite3.OperationalError:
+        return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
     except Exception as e:
         return ErrorResponse(error="WRITE_ERROR", message=str(e)).model_dump()
 
