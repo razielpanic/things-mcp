@@ -210,7 +210,13 @@ end tell
         run_applescript(script)
 
     elif _DATE_RE.match(when_lower):
-        target_date = date.fromisoformat(when_lower)
+        try:
+            target_date = date.fromisoformat(when_lower)
+        except ValueError:
+            return ErrorResponse(
+                error="INVALID_DATE",
+                message=f"Invalid date: {when_lower!r}. Expected a valid YYYY-MM-DD date.",
+            )
         date_block = _applescript_date_block("theDate", target_date)
         script = f'''
 tell application "Things3"
@@ -359,7 +365,13 @@ end run
 
     # Apply deadline if provided
     if deadline is not None:
-        target_date = date.fromisoformat(deadline)
+        try:
+            target_date = date.fromisoformat(deadline)
+        except ValueError:
+            return ErrorResponse(
+                error="INVALID_DATE",
+                message=f"Invalid deadline: {deadline!r}. Expected a valid YYYY-MM-DD date.",
+            )
         date_block = _applescript_date_block("theDate", target_date)
         deadline_script = f'''
 tell application "Things3"
@@ -576,7 +588,13 @@ end tell
 
     # Apply deadline if provided
     if deadline is not None:
-        target_date = date.fromisoformat(deadline)
+        try:
+            target_date = date.fromisoformat(deadline)
+        except ValueError:
+            return ErrorResponse(
+                error="INVALID_DATE",
+                message=f"Invalid deadline: {deadline!r}. Expected a valid YYYY-MM-DD date.",
+            )
         date_block = _applescript_date_block("theDate", target_date)
         deadline_script = f'''
 tell application "Things3"
@@ -666,7 +684,13 @@ def update_item(
         if deadline == "":
             script_lines.append("set due date of theToDo to missing value")
         else:
-            target_date = date.fromisoformat(deadline)
+            try:
+                target_date = date.fromisoformat(deadline)
+            except ValueError:
+                return ErrorResponse(
+                    error="INVALID_DATE",
+                    message=f"Invalid deadline: {deadline!r}. Expected a valid YYYY-MM-DD date.",
+                )
             date_block = _applescript_date_block("theDate", target_date)
             # Date block goes before the tell block in the script
             script_lines.append(f"DATEBLOCK:{date_block}")
