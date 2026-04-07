@@ -457,10 +457,10 @@ def create_project(
             params["deadline"] = deadline
         if when:
             params["when"] = when
-        params["to-dos"] = json.dumps([{"title": t} for t in todos])
+        params["to-dos"] = json.dumps([{"title": t} for t in todos], separators=(",", ":"))
 
         url = "things:///add-project?" + urllib.parse.urlencode(
-            params, quote_via=urllib.parse.quote
+            params, quote_via=lambda s, safe="": urllib.parse.quote(s, safe="")
         )
         subprocess.run(["open", url], capture_output=True, timeout=10)
 
