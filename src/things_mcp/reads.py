@@ -179,7 +179,7 @@ def get_item(*, uuid: str) -> Optional[ThingsItem]:
 def search(
     *,
     query: str,
-    project: str | None = None,
+    project_uuid: str | None = None,
     area: str | None = None,
     tag: str | None = None,
     start_date: str | None = None,
@@ -192,8 +192,8 @@ def search(
     Searches across all items regardless of list placement.
     """
     kwargs: dict = {}
-    if project is not None:
-        kwargs["project"] = project
+    if project_uuid is not None:
+        kwargs["project"] = project_uuid
     if area is not None:
         kwargs["area"] = area
     if tag is not None:

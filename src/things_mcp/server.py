@@ -201,7 +201,7 @@ async def get_item(uuid: str) -> dict:
 @mcp.tool()
 async def search(
     query: str,
-    project: str = "",
+    project_uuid: str = "",
     area: str = "",
     tag: str = "",
     start_date: str = "",
@@ -221,7 +221,7 @@ async def search(
     try:
         items = reads.search(
             query=query,
-            project=project or None,
+            project=project_uuid or None,
             area=area or None,
             tag=tag or None,
             start_date=start_date or None,
