@@ -69,13 +69,16 @@ def run_applescript(script: str, *args: str) -> str:
     Raises:
         RuntimeError: If osascript returns a non-zero exit code.
     """
-    result = subprocess.run(
-        ["osascript", "-", *args],
-        input=script,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
+    try:
+        result = subprocess.run(
+            ["osascript", "-", *args],
+            input=script,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("Things 3 is not responding (timeout after 10s)")
     if result.returncode != 0:
         raise RuntimeError(f"AppleScript error: {result.stderr.strip()}")
     return result.stdout.strip()
