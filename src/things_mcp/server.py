@@ -221,7 +221,7 @@ async def search(
     try:
         items = reads.search(
             query=query,
-            project=project_uuid or None,
+            project_uuid=project_uuid or None,
             area=area or None,
             tag=tag or None,
             start_date=start_date or None,
