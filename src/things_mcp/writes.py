@@ -753,7 +753,7 @@ end tell
 def delete_item(*, uuid: str) -> SuccessResponse | ErrorResponse:
     """Move an item to the trash via AppleScript.
 
-    Uses AppleScript `move to trash` (no auth token needed).
+    Uses AppleScript `move to list "Trash"` (no auth token needed).
     Verifies deletion by confirming things.get(uuid) returns None.
     """
     _validate_uuid(uuid)
@@ -765,7 +765,7 @@ def delete_item(*, uuid: str) -> SuccessResponse | ErrorResponse:
 
     script = f'''
 tell application "Things3"
-    move (to do id "{uuid}") to trash
+    move (to do id "{uuid}") to list "Trash"
 end tell
 '''
     run_applescript(script)
