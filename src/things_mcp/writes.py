@@ -373,29 +373,71 @@ end tell
         if not schedule_result.success:
             return schedule_result
 
-    # Append checklist items via URL scheme update (requires auth, checked above)
+    # Append checklist items via things:///json endpoint (most reliable path)
     checklist_warning = None
     if checklist_items:
-        checklist_json = json.dumps(
-            [{"title": item, "completed": False} for item in checklist_items],
-            separators=(",", ":"),
-        )
-        url = (
-            f"things:///update?id={new_uuid}"
-            f"&append-checklist-items={urllib.parse.quote(checklist_json, safe='')}"
-            f"&auth-token={token}"
-        )
-        subprocess.run(["open", url], capture_output=True, timeout=10)
-        time.sleep(0.5)  # URL scheme is fire-and-forget
+        cl_data = [{"type": "checklist-item", "attributes": {"title": item}} for item in checklist_items]
+        # Use json endpoint to create a temporary todo with checklist, then
+        # we already have the real todo — use AppleScript to read checklist
+        # Actually: delete the AppleScript-created todo and recreate via json
+        # with all attributes including checklist in one shot.
+        # Simpler: use update endpoint via osascript with proper escaping.
+        # Simplest: create a fresh todo via json with checklist included.
 
-        # Verify checklist was added
-        raw_check = things.get(new_uuid)
-        if raw_check is not None:
-            checklist = raw_check.get("checklist", [])
+        # Delete the AppleScript-created todo (we'll recreate via json)
+        trash_script = f'''
+tell application "Things3"
+    move (to do id "{new_uuid}") to list "Trash"
+end tell
+'''
+        run_applescript(trash_script)
+
+        # Build json payload with all attributes
+        attrs: dict = {"title": title}
+        if notes:
+            attrs["notes"] = notes
+        if when:
+            attrs["when"] = when
+        if deadline:
+            attrs["deadline"] = deadline
+        if tags:
+            attrs["tags"] = tags
+        if project_uuid:
+            attrs["list-id"] = project_uuid
+        if area_uuid and not project_uuid:
+            attrs["list-id"] = area_uuid
+        if heading:
+            attrs["heading"] = heading
+        attrs["checklist-items"] = cl_data
+
+        data = [{"type": "to-do", "attributes": attrs}]
+        data_json = json.dumps(data, separators=(",", ":"))
+        encoded = urllib.parse.quote(data_json, safe="")
+        url = f"things:///json?data={encoded}"
+        subprocess.run(
+            ["osascript", "-e", f'open location "{url}"'],
+            capture_output=True,
+            timeout=10,
+        )
+        time.sleep(0.5)
+
+        # Find the newly created todo by title
+        matches = things.tasks(search_query=title)
+        json_todo = None
+        for m in matches:
+            if m["title"] == title and m["uuid"] != new_uuid:
+                json_todo = m
+                break
+
+        if json_todo:
+            new_uuid = json_todo["uuid"]
+            # Verify checklist was added
+            full = things.tasks(uuid=new_uuid, include_items=True)
+            checklist = full.get("checklist", [])
             if not checklist:
-                checklist_warning = (
-                    " Warning: checklist items may not have been added."
-                )
+                checklist_warning = " Warning: checklist items may not have been added."
+        else:
+            checklist_warning = " Warning: could not verify checklist todo creation."
 
     # Verify creation (CLAUDE.md rule 8)
     raw = things.get(new_uuid)
@@ -446,24 +488,28 @@ def create_project(
         )
 
     if todos:
-        # URL scheme path: add-project with to-dos JSON array
-        params: dict[str, str] = {"title": title}
+        # JSON endpoint: reliable path for project + initial todos
+        attrs: dict = {"title": title}
         if notes:
-            params["notes"] = notes
+            attrs["notes"] = notes
         if tags:
-            params["tags"] = ",".join(tags)
+            attrs["tags"] = tags
         if area_uuid:
-            params["area-id"] = area_uuid
+            attrs["area-id"] = area_uuid
         if deadline:
-            params["deadline"] = deadline
+            attrs["deadline"] = deadline
         if when:
-            params["when"] = when
-        params["to-dos"] = json.dumps([{"title": t} for t in todos], separators=(",", ":"))
-
-        url = "things:///add-project?" + urllib.parse.urlencode(
-            params, quote_via=lambda s, safe="", encoding=None, errors=None: urllib.parse.quote(s, safe="")
+            attrs["when"] = when
+        attrs["items"] = [{"type": "to-do", "attributes": {"title": t}} for t in todos]
+        data = [{"type": "project", "attributes": attrs}]
+        data_json = json.dumps(data, separators=(",", ":"))
+        encoded = urllib.parse.quote(data_json, safe="")
+        url = f"things:///json?data={encoded}"
+        subprocess.run(
+            ["osascript", "-e", f'open location "{url}"'],
+            capture_output=True,
+            timeout=10,
         )
-        subprocess.run(["open", url], capture_output=True, timeout=10)
 
         # URL scheme doesn't return UUID; title-based search after delay
         time.sleep(0.5)
