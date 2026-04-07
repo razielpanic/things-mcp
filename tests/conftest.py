@@ -30,7 +30,7 @@ def sample_raw_dict() -> dict:
         "start_date": None,
         "deadline": None,
         "notes": None,
-        "tags": None,
+        "tags": [],
         "project": None,
         "project_title": None,
         "area": None,
