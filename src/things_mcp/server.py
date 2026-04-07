@@ -298,7 +298,7 @@ async def create_todo(
     project_uuid: Optional[str] = None,
     area_uuid: Optional[str] = None,
     heading: Optional[str] = None,
-    checklist_items: Optional[str] = None,
+    checklist_items: Optional[list[str]] = None,
 ) -> dict:
     """Create a new to-do in Things 3.
 
@@ -319,12 +319,12 @@ async def create_todo(
         area_uuid: UUID of parent area (structural context, ignored if
             project_uuid is set).
         heading: Heading title within the project to place under.
-        checklist_items: Newline-separated checklist items. Uses URL scheme
+        checklist_items: List of checklist item titles. Uses URL scheme
             when present (only way to create checklists).
     """
     try:
         tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
-        cl_list = [c.strip() for c in checklist_items.split("\n") if c.strip()] if checklist_items else None
+        cl_list = [c.strip() for c in checklist_items if c.strip()] if checklist_items else None
         result = writes.create_todo(
             title=title,
             notes=notes,
