@@ -209,14 +209,21 @@ class TestCreateTodo:
 
 
 class TestDeleteItem:
-    """Test delete_item success and not-found paths."""
+    """Test delete_item success and not-found paths.
+
+    Things 3 items in Trash remain in the SQLite database with `trashed=True` —
+    they are not removed from disk. Verification must check the `trashed` field,
+    not whether `things.get(uuid)` returns None (it never will after a trash op).
+    See GH issue #1.
+    """
 
     @patch("things_mcp.writes.things.get")
     @patch("things_mcp.writes.subprocess.run")
     def test_success(self, mock_run, mock_get):
         mock_run.return_value = _mock_subprocess_ok()
-        # First call: item exists. Second call: item gone after trash.
-        mock_get.side_effect = [_raw_task(), None]
+        # First call: item exists. Second call: item still exists but with
+        # trashed=True (the correct post-trash-op state).
+        mock_get.side_effect = [_raw_task(), _raw_task(trashed=True)]
         result = writes.delete_item(uuid=VALID_UUID)
         assert isinstance(result, SuccessResponse)
         assert result.success is True
@@ -231,10 +238,23 @@ class TestDeleteItem:
 
     @patch("things_mcp.writes.things.get")
     @patch("things_mcp.writes.subprocess.run")
-    def test_verify_failed(self, mock_run, mock_get):
+    def test_verify_failed_when_trashed_flag_not_set(self, mock_run, mock_get):
         mock_run.return_value = _mock_subprocess_ok()
-        # Item exists before and after (trash didn't work)
-        mock_get.side_effect = [_raw_task(), _raw_task()]
+        # Item exists before and after, but trashed field is missing/false —
+        # indicates the AppleScript trash operation silently failed.
+        mock_get.side_effect = [_raw_task(), _raw_task(trashed=False)]
+        result = writes.delete_item(uuid=VALID_UUID)
+        assert isinstance(result, ErrorResponse)
+        assert result.error == "VERIFY_FAILED"
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_verify_failed_when_item_vanishes(self, mock_run, mock_get):
+        mock_run.return_value = _mock_subprocess_ok()
+        # Defensive: if the second get returns None entirely (item gone from
+        # database, not just trashed), that's an unexpected state — we can't
+        # confirm a proper trash, so VERIFY_FAILED is the safe answer.
+        mock_get.side_effect = [_raw_task(), None]
         result = writes.delete_item(uuid=VALID_UUID)
         assert isinstance(result, ErrorResponse)
         assert result.error == "VERIFY_FAILED"

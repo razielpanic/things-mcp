@@ -826,7 +826,9 @@ def delete_item(*, uuid: str) -> SuccessResponse | ErrorResponse:
     """Move an item to the trash via AppleScript.
 
     Uses AppleScript `move to list "Trash"` (no auth token needed).
-    Verifies deletion by confirming things.get(uuid) returns None.
+    Verifies deletion by confirming the item's `trashed` field is True.
+    Items in Trash remain in the SQLite database — they are not deleted
+    from disk — so existence is not a valid trash check.
     """
     _validate_uuid(uuid)
 
@@ -842,13 +844,17 @@ end tell
 '''
     run_applescript(script)
 
-    # Verify: trashed items are excluded from default queries
-    # Success = things.get(uuid) returns None
+    # Verify: Things 3 items in Trash remain in the SQLite database with
+    # trashed=True. Checking `raw_after is not None` would always fail the
+    # verification because trashed items still exist. Check the `trashed`
+    # field instead.
     raw_after = things.get(uuid)
-    if raw_after is not None:
+    if raw_after is None or not (
+        isinstance(raw_after, dict) and raw_after.get("trashed")
+    ):
         return ErrorResponse(
             error="VERIFY_FAILED",
-            message=f"Item {uuid} still exists after trash operation.",
+            message=f"Item {uuid} was not moved to trash.",
         )
 
     return SuccessResponse(
