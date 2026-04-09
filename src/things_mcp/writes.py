@@ -188,7 +188,12 @@ end tell
             )
         url = f"things:///update?id={uuid}&when=evening&auth-token={token}"
         subprocess.run(["open", url], capture_output=True, timeout=10)
-        time.sleep(0.5)  # URL scheme is fire-and-forget; wait before verification
+        # URL scheme is fire-and-forget; wait before verification
+        if _verify_url_scheme_write(uuid) is None:
+            return ErrorResponse(
+                error="VERIFY_FAILED",
+                message=f"Item {uuid} not found after scheduling.",
+            )
 
     elif when_lower == "anytime":
         # CRITICAL: move to list "Anytime", NOT "Someday"
