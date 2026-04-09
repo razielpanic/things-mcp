@@ -32,3 +32,15 @@ htmlcov/
 # Distribution
 *.tar.gz
 *.whl
+
+# VBW planning workflow (local planning artifacts — not tracked)
+# Contains phase plans, summaries, verifications, UAT reports,
+# milestone archives, and remediation rounds. Per-project state only.
+.vbw-planning/
+
+# Editor + tooling caches
+.claude/
+.git.bak/
+
+# Backup git directory from history rewrite (safe to delete)
+/.git.bak/

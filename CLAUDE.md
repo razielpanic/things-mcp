@@ -43,8 +43,7 @@ Write path: AppleScript primary, URL scheme for checklists only
 
 ## Research
 
-Full specification and issue catalog:
-`/Users/YOU/Projects/OfficeManager/.office-manager/dev-research/things-mcp-research.md`
+See `docs/how-it-works.md` for the data model explanation and `CONTRIBUTING.md` for the architectural rationale and write-path rules.
 
 ## Running tests
 
