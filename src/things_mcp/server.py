@@ -349,12 +349,7 @@ async def create_todo(
     """
     try:
         tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
-        cl_list = None
-        if checklist_items:
-            if isinstance(checklist_items, str):
-                cl_list = [c.strip() for c in checklist_items.split("\n") if c.strip()]
-            else:
-                cl_list = [c.strip() for c in checklist_items if c.strip()]
+        cl_list = [c.strip() for c in checklist_items if c.strip()] if checklist_items else None
         result = writes.create_todo(
             title=title,
             notes=notes,
@@ -402,12 +397,7 @@ async def create_project(
     """
     try:
         tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
-        todo_list = None
-        if todos:
-            if isinstance(todos, str):
-                todo_list = [t.strip() for t in todos.split("\n") if t.strip()]
-            else:
-                todo_list = [t.strip() for t in todos if t.strip()]
+        todo_list = [t.strip() for t in todos if t.strip()] if todos else None
         result = writes.create_project(
             title=title,
             notes=notes,
