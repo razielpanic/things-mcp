@@ -279,30 +279,101 @@ def create_todo(
 ) -> SuccessResponse | ErrorResponse:
     """Create a new to-do in Things 3.
 
-    Uses AppleScript with argv-based input sanitization for user strings.
-    Checklist creation requires Phase 2 (URL scheme with auth token).
+    Without checklist_items: AppleScript (synchronous, UUID returned).
+    With checklist_items: things:///json endpoint (single-call create with
+    checklist embedded, title-based verification — no auth token required).
 
     The `when` parameter accepts: today, tomorrow, evening, anytime,
     someday, or YYYY-MM-DD. See models.WhenValue for semantics.
     """
-    # Checklist requires auth token for URL scheme update -- check early
-    # so we don't create a todo then fail to add its checklist
-    if checklist_items:
-        token = things.token()
-        if token is None:
-            return ErrorResponse(
-                error="NO_AUTH_TOKEN",
-                message="Checklist creation requires auth token. "
-                "Enable Things URLs in Things > Settings > General.",
-            )
-
     # Validate UUIDs if provided
     if project_uuid is not None:
         _validate_uuid(project_uuid)
     if area_uuid is not None:
         _validate_uuid(area_uuid)
 
-    # Create the to-do via AppleScript with argv for user strings
+    # Validate deadline early so both paths share the same error response
+    if deadline is not None:
+        try:
+            date.fromisoformat(deadline)
+        except ValueError:
+            return ErrorResponse(
+                error="INVALID_DATE",
+                message=f"Invalid deadline: {deadline!r}. Expected a valid YYYY-MM-DD date.",
+            )
+
+    if checklist_items:
+        # JSON endpoint: reliable single-call path for todo + checklist.
+        # Avoids the AppleScript create -> trash -> json recreate cycle
+        # (AppleScript cannot attach checklists, and the URL scheme update
+        # endpoint would require an auth token).
+        attrs: dict = {"title": title}
+        if notes:
+            attrs["notes"] = notes
+        if when:
+            attrs["when"] = when
+        if deadline:
+            attrs["deadline"] = deadline
+        if tags:
+            attrs["tags"] = tags
+        if project_uuid:
+            attrs["list-id"] = project_uuid
+        elif area_uuid:
+            attrs["list-id"] = area_uuid
+        if heading:
+            attrs["heading"] = heading
+        attrs["checklist-items"] = [
+            {"type": "checklist-item", "attributes": {"title": item}}
+            for item in checklist_items
+        ]
+
+        data = [{"type": "to-do", "attributes": attrs}]
+        data_json = json.dumps(data, separators=(",", ":"))
+        encoded = urllib.parse.quote(data_json, safe="")
+        url = f"things:///json?data={encoded}"
+        subprocess.run(
+            ["osascript", "-e", f'open location "{url}"'],
+            capture_output=True,
+            timeout=10,
+        )
+
+        # URL scheme doesn't return UUID; title-based search after delay
+        time.sleep(0.5)
+        matches = things.tasks(search_query=title)
+        json_todo = next(
+            (m for m in matches if m.get("title") == title),
+            None,
+        )
+        if not json_todo:
+            return ErrorResponse(
+                error="VERIFY_FAILED",
+                message="To-do not found after creation via URL scheme.",
+            )
+
+        new_uuid = json_todo["uuid"]
+
+        # Verify checklist actually landed (URL scheme is fire-and-forget)
+        full = things.tasks(uuid=new_uuid, include_items=True)
+        has_checklist = (
+            isinstance(full, dict) and bool(full.get("checklist"))
+        )
+        checklist_warning = (
+            "" if has_checklist
+            else " Warning: checklist items may not have been added."
+        )
+
+        return SuccessResponse(
+            uuid=new_uuid,
+            message=(
+                f"Created to-do: {title} "
+                f"(with {len(checklist_items)} checklist items)."
+                f"{checklist_warning}"
+            ),
+            action="created",
+            temporal_state=_read_temporal_state(new_uuid),
+        )
+
+    # AppleScript path: no checklist, synchronous UUID return
     script = '''
 on run argv
     set theTitle to item 1 of argv
@@ -368,15 +439,9 @@ end run
 '''
         run_applescript(heading_script, heading)
 
-    # Apply deadline if provided
+    # Apply deadline if provided (already validated above)
     if deadline is not None:
-        try:
-            target_date = date.fromisoformat(deadline)
-        except ValueError:
-            return ErrorResponse(
-                error="INVALID_DATE",
-                message=f"Invalid deadline: {deadline!r}. Expected a valid YYYY-MM-DD date.",
-            )
+        target_date = date.fromisoformat(deadline)
         date_block = _applescript_date_block("theDate", target_date)
         deadline_script = f'''
 tell application "Things3"
@@ -393,72 +458,6 @@ end tell
         if not schedule_result.success:
             return schedule_result
 
-    # Append checklist items via things:///json endpoint (most reliable path)
-    checklist_warning = None
-    if checklist_items:
-        cl_data = [{"type": "checklist-item", "attributes": {"title": item}} for item in checklist_items]
-        # Use json endpoint to create a temporary todo with checklist, then
-        # we already have the real todo — use AppleScript to read checklist
-        # Actually: delete the AppleScript-created todo and recreate via json
-        # with all attributes including checklist in one shot.
-        # Simpler: use update endpoint via osascript with proper escaping.
-        # Simplest: create a fresh todo via json with checklist included.
-
-        # Delete the AppleScript-created todo (we'll recreate via json)
-        trash_script = f'''
-tell application "Things3"
-    move (to do id "{new_uuid}") to list "Trash"
-end tell
-'''
-        run_applescript(trash_script)
-
-        # Build json payload with all attributes
-        attrs: dict = {"title": title}
-        if notes:
-            attrs["notes"] = notes
-        if when:
-            attrs["when"] = when
-        if deadline:
-            attrs["deadline"] = deadline
-        if tags:
-            attrs["tags"] = tags
-        if project_uuid:
-            attrs["list-id"] = project_uuid
-        if area_uuid and not project_uuid:
-            attrs["list-id"] = area_uuid
-        if heading:
-            attrs["heading"] = heading
-        attrs["checklist-items"] = cl_data
-
-        data = [{"type": "to-do", "attributes": attrs}]
-        data_json = json.dumps(data, separators=(",", ":"))
-        encoded = urllib.parse.quote(data_json, safe="")
-        url = f"things:///json?data={encoded}"
-        subprocess.run(
-            ["osascript", "-e", f'open location "{url}"'],
-            capture_output=True,
-            timeout=10,
-        )
-        time.sleep(0.5)
-
-        # Find the newly created todo by title
-        matches = things.tasks(search_query=title)
-        json_todo = None
-        for m in matches:
-            if m["title"] == title and m["uuid"] != new_uuid:
-                json_todo = m
-                break
-
-        if json_todo:
-            new_uuid = json_todo["uuid"]
-            # Verify checklist was added
-            full = things.tasks(uuid=new_uuid, include_items=True)
-            checklist = full.get("checklist", [])
-            if not checklist:
-                checklist_warning = " Warning: checklist items may not have been added."
-        else:
-            checklist_warning = " Warning: could not verify checklist todo creation."
-
     # Verify creation (CLAUDE.md rule 8)
     raw = things.get(new_uuid)
     if raw is None:
@@ -467,15 +466,9 @@ end tell
             message="To-do not found after creation.",
         )
 
-    message = f"Created to-do: {title}"
-    if checklist_items:
-        message += f" (with {len(checklist_items)} checklist items)"
-    if checklist_warning:
-        message += checklist_warning
-
     return SuccessResponse(
         uuid=new_uuid,
-        message=message,
+        message=f"Created to-do: {title}",
         action="created",
         temporal_state=_read_temporal_state(new_uuid),
     )
