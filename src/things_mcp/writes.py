@@ -487,7 +487,7 @@ def create_project(
     """Create a new project in Things 3.
 
     Without initial to-dos: AppleScript (synchronous, UUID returned).
-    With initial to-dos: URL scheme add-project (fire-and-forget, title-based verification).
+    With initial to-dos: URL scheme things:///json endpoint (fire-and-forget, title-based verification, no auth token required).
     Never schedule a project to Today -- only tasks get Today.
     """
     if area_uuid is not None:
