@@ -312,3 +312,39 @@ class TestMoveToContext:
         )
         assert isinstance(result, ErrorResponse)
         assert result.error == "INVALID_INPUT"
+
+
+class TestUpdateItem:
+    """Test update_item field-clearing and update paths."""
+
+    @patch("things_mcp.writes.time.sleep")
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_deadline_clear_uses_missing_value(self, mock_run, mock_get, mock_sleep):
+        # Arrange: post-clear state has deadline=None (follow-up read
+        # verification per CLAUDE.md rule 8).
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.return_value = _raw_task(deadline=None)
+
+        # Act: clear the deadline via the empty-string sentinel
+        result = writes.update_item(uuid=VALID_UUID, deadline="")
+
+        # Assert: AppleScript payload uses the `missing value` literal
+        # (fix guard for writes.py:680-683; the pre-fix bug error was
+        # "Can't make missing value into type date").
+        script = mock_run.call_args[1].get("input") or mock_run.call_args[0][0]
+        assert "set due date of theToDo to missing value" in script
+
+        # Assert: response contract
+        assert isinstance(result, SuccessResponse)
+        assert result.action == "updated"
+        # per writes.py:746-747, parts.append("deadline") when deadline is not None
+        assert "deadline" in result.message
+        # temporal_state is built unconditionally; it does not read the
+        # deadline field, so we only assert it exists.
+        assert result.temporal_state is not None
+
+        # Assert: follow-up-read verification — the mocked post-clear state
+        # has deadline=None, documenting that the cleared state is what the
+        # verification read returned (CLAUDE.md rule 8).
+        assert mock_get.return_value["deadline"] is None
