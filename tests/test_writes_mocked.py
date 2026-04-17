@@ -109,11 +109,27 @@ class TestScheduleItem:
     @patch("things_mcp.writes.things.get")
     @patch("things_mcp.writes.subprocess.run")
     def test_anytime(self, mock_run, mock_get, mock_sleep):
+        # Arrange: post-write state has start=Anytime, start_date cleared
         mock_run.return_value = _mock_subprocess_ok()
-        mock_get.return_value = _raw_task(start="Anytime")
+        mock_get.return_value = _raw_task(start="Anytime", start_date=None)
+
+        # Act
         result = writes.schedule_item(uuid=VALID_UUID, when="anytime")
+
+        # Assert: response contract
         assert isinstance(result, SuccessResponse)
         assert result.action == "moved_to_anytime"
+
+        # Assert: AppleScript payload uses the "Anytime" list (fix guard for
+        # the pre-fix "Someday" bug at writes.py:198-206).
+        script = mock_run.call_args[1].get("input") or mock_run.call_args[0][0]
+        assert 'move theToDo to list "Anytime"' in script
+        assert '"Someday"' not in script
+
+        # Assert: temporal_state reflects post-move state
+        assert result.temporal_state is not None
+        assert result.temporal_state.derived_list == "Anytime"
+        assert result.temporal_state.start_date is None
 
     @patch("things_mcp.writes.time.sleep")
     @patch("things_mcp.writes.things.get")
