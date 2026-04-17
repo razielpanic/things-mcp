@@ -55,6 +55,33 @@ class TestAnytimeReads:
         assert isinstance(items, list)
         assert len(items) >= 1
 
+    def test_get_anytime_excludes_scheduled_items(self, things_db):
+        """get_anytime must not dual-list items with a future start_date.
+
+        Regression test for the bug where get_anytime called things.anytime()
+        without a start_date filter, so items with start=Anytime AND a future
+        start_date (which Things shows in Upcoming) leaked into the result.
+        The fix pushes start_date=False down to things.anytime().
+
+        Truth table: derived_list == "Anytime" iff start=Anytime AND
+        start_date IS NULL. Assert the function enforces that.
+        """
+        # Arrange — fixture seeds:
+        #   AnytimeTask000000000001: start=Anytime, no start_date (true Anytime).
+        #   UpcomingTask000000000001: start=Anytime, startDate=tomorrow
+        #     (contaminant: derives to Upcoming, not Anytime).
+
+        # Act
+        items = reads.get_anytime()
+        uuids = {i.uuid for i in items}
+
+        # Assert
+        assert "AnytimeTask000000000001" in uuids
+        assert "UpcomingTask000000000001" not in uuids
+        for item in items:
+            assert item.temporal_state.derived_list == "Anytime"
+            assert item.temporal_state.start_date is None
+
 
 class TestSomedayReads:
     """Test get_someday against fixture DB."""
