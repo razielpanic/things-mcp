@@ -171,6 +171,10 @@ def get_item(*, uuid: str) -> Optional[ThingsItem]:
 
     Returns None if the item does not exist. Notes are returned in full
     (not truncated like list views). Checklist items are fetched separately.
+    When the item is a project, its child to-dos are populated into
+    ``item.items`` via a separate ``things.tasks(project=uuid)`` query
+    (mirrors get_projects(include_items=True); child items also carry
+    full-detail notes).
     """
     raw = things.get(uuid)
     if raw is None:
@@ -184,7 +188,16 @@ def get_item(*, uuid: str) -> Optional[ThingsItem]:
     except Exception:
         pass
 
-    return _item_from_dict(raw, truncate_notes=False)
+    item = _item_from_dict(raw, truncate_notes=False)
+
+    # If this is a project, populate its child tasks. Mirrors the
+    # get_projects(include_items=True) pattern — queried separately by
+    # project UUID to avoid the upstream things.py include_items bug.
+    if item.type == "project":
+        raw_children = things.tasks(project=uuid)
+        item.items = [_item_from_dict(r, truncate_notes=False) for r in raw_children]
+
+    return item
 
 
 def search(
