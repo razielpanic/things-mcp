@@ -142,7 +142,7 @@ def get_anytime(*, limit: int = 50) -> list[ThingsItem]:
     This is the default state for processed items -- Anytime means
     "available for work whenever."
     """
-    raw_items = things.anytime()[:limit]
+    raw_items = things.anytime(start_date=False)[:limit]
     return [_item_from_dict(r) for r in raw_items]
 
 
