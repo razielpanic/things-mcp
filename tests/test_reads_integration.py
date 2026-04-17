@@ -87,6 +87,34 @@ class TestGetItem:
         # Item may or may not have notes, but the path is exercised
         assert item is not None
 
+    def test_get_item_on_project_populates_items(self, things_db):
+        """get_item on a project UUID populates items with child tasks.
+
+        Regression test for the bug where get_item returned project items
+        with an empty items list. The fix mirrors get_projects(include_items=True)
+        by querying things.tasks(project=uuid) for child tasks and mapping
+        them through _item_from_dict(truncate_notes=False).
+        """
+        # Arrange — fixture seeds ProjectTask000000000001 with child
+        # ChildTask0000000000001a ("Design mockups") in create_fixture.py.
+        project_uuid = "ProjectTask000000000001"
+        expected_child_uuid = "ChildTask0000000000001a"
+        expected_child_title = "Design mockups"
+
+        # Act
+        item = reads.get_item(uuid=project_uuid)
+
+        # Assert
+        assert item is not None
+        assert item.type == "project"
+        assert len(item.items) >= 1
+        assert any(child.uuid == expected_child_uuid for child in item.items)
+        assert any(child.title == expected_child_title for child in item.items)
+        # Every child must carry derived_list per CLAUDE.md rule 1.
+        for child in item.items:
+            assert child.temporal_state.derived_list is not None
+            assert isinstance(child.temporal_state.derived_list, str)
+
 
 class TestSearch:
     """Test search function against fixture DB."""
