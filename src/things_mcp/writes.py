@@ -94,8 +94,15 @@ def _applescript_date_block(var: str, d: date) -> str:
     Returns:
         AppleScript code block that sets the variable to the given date.
     """
+    # Set day to 1 BEFORE setting month/year. Mutating an AppleScript date in
+    # place rolls the month forward when the current day-of-month exceeds the
+    # target month's length (e.g. run on the 31st, "set month to 6" overflows
+    # June -> July, landing the date a month late). The 1st is valid in every
+    # month, so neutralizing the day first makes the month assignment safe; the
+    # real day is applied last.
     return (
         f"set {var} to current date\n"
+        f"set day of {var} to 1\n"
         f"set year of {var} to {d.year}\n"
         f"set month of {var} to {d.month}\n"
         f"set day of {var} to {d.day}\n"
@@ -125,6 +132,39 @@ def _read_temporal_state(uuid: str) -> TemporalState | None:
         status=status,
         evening=evening,
     )
+
+
+def _reopen_if_unexpectedly_closed(
+    uuid: str, pre_status: str | None, post_status: str | None
+) -> ErrorResponse | None:
+    """Guard against silent completion: restore an item the write closed by accident.
+
+    No write here (scheduling, notes, retitle, move, deadline) should ever flip an
+    open item to completed/canceled — only an explicit completed/canceled request
+    may. If a write does so anyway, reopen the item and return an error so the
+    caller learns of the anomaly instead of silently logbooking an active task.
+
+    Returns an ErrorResponse describing the recovery, or None if status is fine.
+    """
+    if post_status in ("completed", "canceled") and pre_status not in (
+        "completed",
+        "canceled",
+    ):
+        try:
+            run_applescript(
+                f'tell application "Things3" to set status of (to do id "{uuid}") to open'
+            )
+        except RuntimeError:
+            pass
+        return ErrorResponse(
+            error="UNEXPECTED_STATUS_CHANGE",
+            message=(
+                f"Write unexpectedly set status to {post_status!r} without a "
+                "completed/canceled request; the item was restored to open. "
+                "Re-check the item — no other field change is guaranteed."
+            ),
+        )
+    return None
 
 
 def _verify_url_scheme_write(uuid: str, *, delay: float = 0.5) -> dict | None:
@@ -157,6 +197,11 @@ def schedule_item(
     CRITICAL: "anytime" must map to move to list "Anytime", NOT Someday.
     """
     _validate_uuid(uuid)
+
+    # Capture prior status for the silent-completion guard (scheduling must
+    # never change completion status).
+    _pre = things.get(uuid)
+    pre_status = _pre.get("status") if isinstance(_pre, dict) else None
 
     when_lower = when.lower().strip()
 
@@ -256,6 +301,12 @@ end tell
             error="VERIFY_FAILED",
             message=f"Item {uuid} not found after scheduling.",
         )
+
+    guard = _reopen_if_unexpectedly_closed(
+        uuid, pre_status, raw.get("status") if isinstance(raw, dict) else None
+    )
+    if guard is not None:
+        return guard
 
     return SuccessResponse(
         uuid=uuid,
@@ -635,6 +686,8 @@ def update_item(
     tags: Optional[str] = None,
     completed: Optional[bool] = None,
     canceled: Optional[bool] = None,
+    project_uuid: Optional[str] = None,
+    area_uuid: Optional[str] = None,
 ) -> SuccessResponse | ErrorResponse:
     """Update any field on an existing item.
 
@@ -642,14 +695,46 @@ def update_item(
     All user-supplied strings passed via argv, never embedded in script.
 
     Important: `completed` and `canceled` must be actual booleans.
+
+    `project_uuid` / `area_uuid` move the item's structural context (same
+    operation as move_to_context). Provide at most one.
     """
     _validate_uuid(uuid)
+
+    if project_uuid is not None and area_uuid is not None:
+        return ErrorResponse(
+            error="INVALID_INPUT",
+            message="Provide project_uuid or area_uuid, not both.",
+        )
+    if project_uuid is not None:
+        _validate_uuid(project_uuid)
+    if area_uuid is not None:
+        _validate_uuid(area_uuid)
+
+    # Capture prior status for the silent-completion guard below.
+    _pre = things.get(uuid)
+    pre_status = _pre.get("status") if isinstance(_pre, dict) else None
 
     # Handle scheduling separately via schedule_item (reuse logic)
     if when is not None:
         schedule_result = schedule_item(uuid=uuid, when=when)
         if not schedule_result.success:
             return schedule_result
+
+    # Structural move to a project or area. update_item previously had no
+    # project_uuid/area_uuid params, so callers asking it to file a task into a
+    # project got a silent no-op. Delegate to the same AppleScript that
+    # move_to_context uses (which works correctly).
+    if project_uuid is not None:
+        run_applescript(
+            f'tell application "Things3" to set project of '
+            f'(to do id "{uuid}") to project id "{project_uuid}"'
+        )
+    elif area_uuid is not None:
+        run_applescript(
+            f'tell application "Things3" to set area of '
+            f'(to do id "{uuid}") to area id "{area_uuid}"'
+        )
 
     # Build argv list and script dynamically based on provided fields
     argv_items: list[str] = []
@@ -751,6 +836,20 @@ end tell
         parts.append("completed")
     if canceled is True:
         parts.append("canceled")
+    if project_uuid is not None:
+        parts.append("project")
+    if area_uuid is not None:
+        parts.append("area")
+
+    # Guard: a routine update (notes/title/tags/deadline/reschedule/move) must
+    # never silently complete or cancel an open item. If it did, reopen and
+    # report rather than logbooking an active task.
+    if completed is not True and canceled is not True:
+        guard = _reopen_if_unexpectedly_closed(
+            uuid, pre_status, raw.get("status") if isinstance(raw, dict) else None
+        )
+        if guard is not None:
+            return guard
 
     return SuccessResponse(
         uuid=uuid,

@@ -424,6 +424,8 @@ async def update_item(
     tags: Optional[str] = None,
     completed: Optional[bool] = None,
     canceled: Optional[bool] = None,
+    project_uuid: Optional[str] = None,
+    area_uuid: Optional[str] = None,
 ) -> dict:
     """Update properties on an existing item.
 
@@ -442,6 +444,9 @@ async def update_item(
             moves to Logbook (overrides temporal placement).
         canceled: Set to true to cancel. Status -> canceled, item moves to
             Logbook (overrides temporal placement).
+        project_uuid: File the item into this project (structural move, same
+            as move_to_context). Provide at most one of project_uuid/area_uuid.
+        area_uuid: File the item into this area (structural move).
     """
     try:
         result = writes.update_item(
@@ -453,6 +458,8 @@ async def update_item(
             tags=tags,
             completed=completed,
             canceled=canceled,
+            project_uuid=project_uuid,
+            area_uuid=area_uuid,
         )
         return result.model_dump()
     except sqlite3.OperationalError:

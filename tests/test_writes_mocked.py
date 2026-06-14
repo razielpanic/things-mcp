@@ -348,3 +348,122 @@ class TestUpdateItem:
         # has deadline=None, documenting that the cleared state is what the
         # verification read returned (CLAUDE.md rule 8).
         assert mock_get.return_value["deadline"] is None
+
+
+class TestUpdateItemProjectMove:
+    """update_item must support filing into a project/area (was a silent no-op)."""
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_project_uuid_emits_move_script(self, mock_run, mock_get):
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.return_value = _raw_task()
+
+        result = writes.update_item(uuid=VALID_UUID, project_uuid=ALT_UUID)
+
+        # Some AppleScript invocation must set the project context.
+        scripts = [
+            (c.kwargs.get("input") or (c.args[0] if c.args else ""))
+            for c in mock_run.call_args_list
+        ]
+        joined = "\n".join(scripts)
+        assert "set project of" in joined
+        assert f'project id "{ALT_UUID}"' in joined
+
+        assert isinstance(result, SuccessResponse)
+        assert "project" in result.message
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_area_uuid_emits_move_script(self, mock_run, mock_get):
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.return_value = _raw_task()
+
+        result = writes.update_item(uuid=VALID_UUID, area_uuid=ALT_UUID)
+
+        scripts = [
+            (c.kwargs.get("input") or (c.args[0] if c.args else ""))
+            for c in mock_run.call_args_list
+        ]
+        joined = "\n".join(scripts)
+        assert "set area of" in joined
+        assert f'area id "{ALT_UUID}"' in joined
+        assert isinstance(result, SuccessResponse)
+        assert "area" in result.message
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_both_project_and_area_rejected(self, mock_run, mock_get):
+        result = writes.update_item(
+            uuid=VALID_UUID, project_uuid=ALT_UUID, area_uuid="C" * 22
+        )
+        assert isinstance(result, ErrorResponse)
+        assert result.error == "INVALID_INPUT"
+        # rejected before any write or read happens
+        mock_run.assert_not_called()
+        mock_get.assert_not_called()
+
+
+class TestSilentCompletionGuard:
+    """A non-completing write must never silently complete/cancel an open item."""
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_update_reopens_and_errors_on_unexpected_completion(
+        self, mock_run, mock_get
+    ):
+        mock_run.return_value = _mock_subprocess_ok()
+        # pre-read: incomplete; post-write verify: unexpectedly completed
+        mock_get.side_effect = [
+            _raw_task(status="incomplete"),
+            _raw_task(status="completed"),
+        ]
+
+        result = writes.update_item(uuid=VALID_UUID, notes="just a note")
+
+        assert isinstance(result, ErrorResponse)
+        assert result.error == "UNEXPECTED_STATUS_CHANGE"
+        # the guard issued a reopen AppleScript
+        scripts = [
+            (c.kwargs.get("input") or (c.args[0] if c.args else ""))
+            for c in mock_run.call_args_list
+        ]
+        assert any("set status of" in s and "to open" in s for s in scripts)
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_explicit_completed_request_is_not_guarded(self, mock_run, mock_get):
+        mock_run.return_value = _mock_subprocess_ok()
+        # pre-read, post-write verify, and the success-path temporal_state read
+        mock_get.side_effect = [
+            _raw_task(status="incomplete"),
+            _raw_task(status="completed"),
+            _raw_task(status="completed"),
+        ]
+
+        result = writes.update_item(uuid=VALID_UUID, completed=True)
+
+        # caller asked for completion -> success, no reopen
+        assert isinstance(result, SuccessResponse)
+        scripts = [
+            (c.kwargs.get("input") or (c.args[0] if c.args else ""))
+            for c in mock_run.call_args_list
+        ]
+        assert not any("to open" in s for s in scripts)
+
+    @patch("things_mcp.writes.time.sleep")
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_schedule_reopens_on_unexpected_completion(
+        self, mock_run, mock_get, mock_sleep
+    ):
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.side_effect = [
+            _raw_task(status="incomplete"),
+            _raw_task(status="completed", start_date="2026-06-14"),
+        ]
+
+        result = writes.schedule_item(uuid=VALID_UUID, when="today")
+
+        assert isinstance(result, ErrorResponse)
+        assert result.error == "UNEXPECTED_STATUS_CHANGE"
