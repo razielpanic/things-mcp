@@ -333,8 +333,13 @@ async def create_todo(
     includes temporal_state showing the resulting computed view.
 
     Args:
-        title: The to-do title.
-        notes: Body text / markdown notes.
+        title: One action only -- a GTD next-action verb phrase ("Call Silvio",
+            "Draft Q1 invoice"), NOT a sentence. Dates, project/context tags,
+            status, and history do NOT belong here -- they have dedicated fields
+            (deadline, when, project_uuid, area_uuid, tags) or go in notes. Things
+            is schema-structured by design; keep the title bare.
+        notes: Body text / markdown notes. Put description, context, links, and
+            any multi-line detail here -- everything that is not the one action.
         when: Scheduling -- "today", "tomorrow", "evening", "anytime",
             "someday", or "YYYY-MM-DD". None = Inbox (default).
         deadline: Due date as "YYYY-MM-DD". Adds visual pressure but does
@@ -386,8 +391,10 @@ async def create_project(
     project's computed view placement.
 
     Args:
-        title: Project title.
-        notes: Project notes.
+        title: A bare noun phrase naming the project ("Server Migration",
+            "HHD 2026 Prep") -- no dates, separators, or metadata; those go in
+            dedicated fields or notes.
+        notes: Project notes -- description, scope, links, multi-line detail.
         when: Scheduling -- "anytime", "someday", or "YYYY-MM-DD". Never
             use "today" for projects.
         deadline: Project deadline.
@@ -435,8 +442,11 @@ async def update_item(
 
     Args:
         uuid: The item's UUID (required).
-        title: New title.
-        notes: New notes (replaces existing).
+        title: New title -- one action as a GTD verb phrase (to-dos) or a bare
+            noun phrase (projects). No dates, tags, or metadata in the title;
+            use the dedicated fields below.
+        notes: New notes (replaces existing). Description, context, history, and
+            multi-line detail belong here, not in the title.
         when: Reschedule -- triggers state transition (see schedule_item).
         deadline: New deadline as "YYYY-MM-DD", or "" to clear.
         tags: New comma-separated tags (replaces existing).
