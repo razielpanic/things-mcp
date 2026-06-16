@@ -29,8 +29,15 @@ import things
 from things_mcp.derivation import derive_list
 from things_mcp.models import ErrorResponse, SuccessResponse, TemporalState
 
-# Things 3 uses 22-char base62 identifiers (alphanumeric, no dashes)
-_UUID_RE = re.compile(r"^[A-Za-z0-9]{22}$")
+# Things 3 uses base62 identifiers (alphanumeric, no dashes). They are usually
+# 22 chars, but when the high-order base62 digit is zero it gets dropped, so
+# real IDs surfaced by the read tools are sometimes 21 chars (e.g. the GTD area
+# 'eCNdD4xfM23J1nBop9ixv' and tasks like 'ufGzuLaRsMNZDPRPB3yPj'). Accept both
+# lengths — rejecting 21-char IDs made DB-real items unreachable by write ops
+# (dev-issue 2026-04-20 / upstream #4). The injection guard is the [A-Za-z0-9]
+# character class (no quotes/specials reach AppleScript); length is only a
+# sanity bound.
+_UUID_RE = re.compile(r"^[A-Za-z0-9]{21,22}$")
 
 # Date pattern for YYYY-MM-DD when values
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")

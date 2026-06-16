@@ -14,19 +14,28 @@ from things_mcp.writes import _applescript_date_block, _validate_uuid
 
 
 class TestValidateUuid:
-    """Tests for _validate_uuid: 22-char base62 validation."""
+    """Tests for _validate_uuid: 21- or 22-char base62 validation."""
 
     def test_valid_22_char_base62(self):
         result = _validate_uuid("A" * 22)
         assert result == "A" * 22
+
+    def test_valid_21_char_base62(self):
+        # Real Things IDs are sometimes 21 chars when a leading base62 digit is
+        # dropped — these are DB-real and must be writable (dev-issue 2026-04-20
+        # / upstream #4). Verbatim IDs observed in the wild.
+        for uuid in ("ufGzuLaRsMNZDPRPB3yPj", "eCNdD4xfM23J1nBop9ixv"):
+            assert len(uuid) == 21
+            assert _validate_uuid(uuid) == uuid
 
     def test_valid_mixed_alphanumeric(self):
         uuid = "AbCdEfGh1234567890XyZz"
         assert _validate_uuid(uuid) == uuid
 
     def test_too_short(self):
+        # 20 chars is below the accepted 21/22 band.
         with pytest.raises(ValueError, match="Invalid UUID format"):
-            _validate_uuid("A" * 21)
+            _validate_uuid("A" * 20)
 
     def test_too_long(self):
         with pytest.raises(ValueError, match="Invalid UUID format"):
