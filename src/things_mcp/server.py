@@ -446,8 +446,8 @@ async def update_item(
             noun phrase (projects). No dates, tags, or metadata in the title;
             use the dedicated fields below.
         notes: New notes (REPLACES the whole body, not a merge). If the item was
-            wired with link_blocker, this wipes its ``**Gated by:**`` /
-            ``**Gates:**`` blocks -- read the current notes, splice your change
+            wired with link_blocker, this wipes its ``Gated by:`` /
+            ``Gates:`` blocks -- read the current notes, splice your change
             in, and write it all back, or re-run link_blocker afterward.
         when: Reschedule -- triggers state transition (see schedule_item).
         deadline: New deadline as "YYYY-MM-DD", or "" to clear.
@@ -557,8 +557,8 @@ async def link_blocker(blocker_uuid: str, dependent_uuid: str) -> dict:
     """Wire a 'blocked by' dependency: blocker_uuid blocks dependent_uuid.
 
     Things has no native task-to-task relation; this synthesizes one. The
-    dependent gets the ``gated`` tag plus a ``**Gated by:**`` link to the
-    blocker in its notes, and the blocker gets a reciprocal ``**Gates:**`` link
+    dependent gets the ``gated`` tag plus a ``Gated by:`` link to the
+    blocker in its notes, and the blocker gets a reciprocal ``Gates:`` link
     to the dependent. Tags and notes are MERGED, never replaced -- existing tags
     and user-authored notes are preserved. Idempotent (calling twice changes
     nothing) and many-to-many (a dependent may be gated by several blockers).
@@ -587,8 +587,8 @@ async def unlink_blocker(blocker_uuid: str, dependent_uuid: str) -> dict:
     """Remove a 'blocked by' dependency: blocker_uuid no longer blocks dependent.
 
     The inverse of link_blocker, for explicit/manual resolution. Drops the
-    dependent's link from the blocker's ``**Gates:**`` block and the blocker's
-    link from the dependent's ``**Gated by:**`` block, collapsing either block
+    dependent's link from the blocker's ``Gates:`` block and the blocker's
+    link from the dependent's ``Gated by:`` block, collapsing either block
     when it empties. The ``gated`` tag is removed from the dependent ONLY when
     no blockers remain -- its other tags and any remaining blockers are left
     intact. Idempotent; verifies both sides via things.get before reporting.
@@ -617,8 +617,8 @@ async def reconcile_completion(uuid: str) -> dict:
 
     Things has no event hooks, so blocker-relation cleanup is caller-triggered:
     call this when you mark a task complete or canceled. It removes the task
-    from both directions -- every blocker's ``**Gates:**`` block that named it,
-    and every dependent's ``**Gated by:**`` block that named it (dropping that
+    from both directions -- every blocker's ``Gates:`` block that named it,
+    and every dependent's ``Gated by:`` block that named it (dropping that
     dependent's ``gated`` tag when this was its last blocker) -- and clears the
     task's own managed blocks. Idempotent and safe on a task with no relations
     (a no-op). Verifies via things.get that no dangling reference survives.

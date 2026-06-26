@@ -554,10 +554,10 @@ class TestLinkBlocker:
         # Tag merge preserves the dependent's existing tags (no clobber).
         assert fake.store[DEP]["tags"] == ["home", "gated"]
         # Dependent -> blocker under Gated by.
-        assert "**Gated by:**" in fake.store[DEP]["notes"]
+        assert "Gated by:" in fake.store[DEP]["notes"]
         assert f"things:///show?id={BLK}" in fake.store[DEP]["notes"]
         # Blocker -> dependent under Gates.
-        assert "**Gates:**" in fake.store[BLK]["notes"]
+        assert "Gates:" in fake.store[BLK]["notes"]
         assert f"things:///show?id={DEP}" in fake.store[BLK]["notes"]
 
     @patch("things_mcp.writes.run_applescript")
@@ -573,9 +573,9 @@ class TestLinkBlocker:
 
         # User-authored notes survive above the managed block.
         assert fake.store[DEP]["notes"].startswith("dependent prose")
-        assert "**Gated by:**" in fake.store[DEP]["notes"]
+        assert "Gated by:" in fake.store[DEP]["notes"]
         assert fake.store[BLK]["notes"].startswith("blocker prose")
-        assert "**Gates:**" in fake.store[BLK]["notes"]
+        assert "Gates:" in fake.store[BLK]["notes"]
 
     @patch("things_mcp.writes.run_applescript")
     @patch("things_mcp.writes.things.get")
@@ -616,7 +616,7 @@ class TestLinkBlocker:
 
         notes = fake.store[DEP]["notes"]
         # One managed block holding both blockers.
-        assert notes.count("**Gated by:**") == 1
+        assert notes.count("Gated by:") == 1
         assert f"things:///show?id={BLK}" in notes
         assert f"things:///show?id={BLK2}" in notes
         # `gated` applied once, not duplicated.
@@ -636,7 +636,7 @@ class TestLinkBlocker:
         writes.link_blocker(blocker_uuid=BLK, dependent_uuid=DEP2)
 
         notes = fake.store[BLK]["notes"]
-        assert notes.count("**Gates:**") == 1
+        assert notes.count("Gates:") == 1
         assert f"things:///show?id={DEP}" in notes
         assert f"things:///show?id={DEP2}" in notes
         assert fake.store[DEP]["tags"] == ["gated"]
@@ -803,7 +803,7 @@ class TestReconcileCompletion:
         assert result.action == "reconciled"
         # The completed task is clean...
         assert "gated" not in fake.store[DEP]["tags"]
-        assert "**Gated by:**" not in (fake.store[DEP]["notes"] or "")
+        assert "Gated by:" not in (fake.store[DEP]["notes"] or "")
         # ...and the blocker no longer dangles a 'Gates' link to it.
         assert f"things:///show?id={DEP}" not in (fake.store[BLK]["notes"] or "")
 
@@ -822,7 +822,7 @@ class TestReconcileCompletion:
 
         assert isinstance(result, SuccessResponse)
         # The blocker is clean...
-        assert "**Gates:**" not in (fake.store[BLK]["notes"] or "")
+        assert "Gates:" not in (fake.store[BLK]["notes"] or "")
         # ...and the freed dependent loses both the link and the `gated` tag.
         assert f"things:///show?id={BLK}" not in (fake.store[DEP]["notes"] or "")
         assert "gated" not in fake.store[DEP]["tags"]
@@ -849,8 +849,8 @@ class TestReconcileCompletion:
         assert f"things:///show?id={DEP}" not in (fake.store[DEP2]["notes"] or "")
         assert "gated" not in fake.store[DEP2]["tags"]
         # DEP itself carries no managed block and no `gated` tag.
-        assert "**Gated by:**" not in (fake.store[DEP]["notes"] or "")
-        assert "**Gates:**" not in (fake.store[DEP]["notes"] or "")
+        assert "Gated by:" not in (fake.store[DEP]["notes"] or "")
+        assert "Gates:" not in (fake.store[DEP]["notes"] or "")
         assert "gated" not in fake.store[DEP]["tags"]
 
     @patch("things_mcp.writes.run_applescript")

@@ -139,9 +139,9 @@ class TestApplescriptDateBlock:
         )
 
 
-def _link(title: str, uuid: str) -> str:
-    """Render one managed entry line the way writes.py does."""
-    return f"[{title}](things:///show?id={uuid})"
+def _entry(title: str, uuid: str) -> str:
+    """Render one managed entry (title line + deep-link line) like writes.py."""
+    return f"{title}\nthings:///show?id={uuid}"
 
 
 class TestMergeTag:
@@ -163,27 +163,29 @@ class TestMergeTag:
 
 
 class TestRenderRelationBlock:
-    """_render_relation_block: label + one named link per entry."""
+    """_render_relation_block: label + a title line / deep-link line per entry."""
 
     def test_empty_entries_render_nothing(self):
         assert _render_relation_block(_REL_GATED_BY, []) == ""
 
     def test_single_entry(self):
         block = _render_relation_block(_REL_GATED_BY, [("Do first", UUID_A)])
-        assert block == f"{_REL_GATED_BY}\n{_link('Do first', UUID_A)}"
+        assert block == f"{_REL_GATED_BY}\n{_entry('Do first', UUID_A)}"
 
-    def test_multiple_entries_one_per_line(self):
+    def test_multiple_entries_title_then_url(self):
         block = _render_relation_block(
             _REL_GATED_BY, [("A", UUID_A), ("B", UUID_B)]
         )
         lines = block.split("\n")
         assert lines[0] == _REL_GATED_BY
-        assert lines[1] == _link("A", UUID_A)
-        assert lines[2] == _link("B", UUID_B)
+        assert lines[1] == "A"
+        assert lines[2] == f"things:///show?id={UUID_A}"
+        assert lines[3] == "B"
+        assert lines[4] == f"things:///show?id={UUID_B}"
 
 
 class TestParseRelationBlock:
-    """_parse_relation_block: locate label, consume contiguous link lines."""
+    """_parse_relation_block: locate label, consume (title, deep-link) pairs."""
 
     def test_absent_label_returns_notes_unchanged(self):
         text, entries = _parse_relation_block("just user notes", _REL_GATED_BY)
@@ -198,22 +200,23 @@ class TestParseRelationBlock:
     def test_extracts_entries_and_strips_block(self):
         notes = (
             f"user text\n\n{_REL_GATED_BY}\n"
-            f"{_link('First', UUID_A)}\n{_link('Second', UUID_B)}"
+            f"{_entry('First', UUID_A)}\n{_entry('Second', UUID_B)}"
         )
         text, entries = _parse_relation_block(notes, _REL_GATED_BY)
         assert text == "user text"
         assert entries == [("First", UUID_A), ("Second", UUID_B)]
 
     def test_title_with_brackets_and_parens(self):
-        # Greedy title group must backtrack to the final things:// anchor.
+        # The title is its own plain line, so brackets/parens (which would have
+        # tripped a markdown-link parser) are stored and read back verbatim.
         title = "Fix [URGENT] thing (re: prod)"
-        notes = f"{_REL_GATED_BY}\n{_link(title, UUID_A)}"
+        notes = f"{_REL_GATED_BY}\n{_entry(title, UUID_A)}"
         _text, entries = _parse_relation_block(notes, _REL_GATED_BY)
         assert entries == [(title, UUID_A)]
 
     def test_block_stops_at_non_entry_line(self):
         notes = (
-            f"{_REL_GATED_BY}\n{_link('A', UUID_A)}\n"
+            f"{_REL_GATED_BY}\n{_entry('A', UUID_A)}\n"
             "trailing user prose that is not a link"
         )
         text, entries = _parse_relation_block(notes, _REL_GATED_BY)
@@ -225,8 +228,8 @@ class TestParseRelationBlock:
         from things_mcp.writes import _REL_GATES
 
         notes = (
-            f"{_REL_GATES}\n{_link('Dep', UUID_C)}\n\n"
-            f"{_REL_GATED_BY}\n{_link('Blk', UUID_A)}"
+            f"{_REL_GATES}\n{_entry('Dep', UUID_C)}\n\n"
+            f"{_REL_GATED_BY}\n{_entry('Blk', UUID_A)}"
         )
         _text, gated_by = _parse_relation_block(notes, _REL_GATED_BY)
         assert gated_by == [("Blk", UUID_A)]
@@ -251,7 +254,7 @@ class TestSpliceNotes:
         # produces byte-identical notes on every subsequent pass.
         notes = (
             f"user text\n\n{_REL_GATED_BY}\n"
-            f"{_link('A', UUID_A)}\n{_link('B', UUID_B)}"
+            f"{_entry('A', UUID_A)}\n{_entry('B', UUID_B)}"
         )
         text, entries = _parse_relation_block(notes, _REL_GATED_BY)
         rebuilt = _splice_notes(text, _render_relation_block(_REL_GATED_BY, entries))
@@ -273,7 +276,7 @@ class TestRelationPresent:
         assert not _has_uuid(entries, UUID_C)
 
     def test_relation_present(self):
-        notes = f"{_REL_GATED_BY}\n{_link('A', UUID_A)}"
+        notes = f"{_REL_GATED_BY}\n{_entry('A', UUID_A)}"
         assert _relation_present(notes, _REL_GATED_BY, UUID_A)
         assert not _relation_present(notes, _REL_GATED_BY, UUID_B)
 

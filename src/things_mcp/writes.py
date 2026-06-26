@@ -189,9 +189,9 @@ def _verify_url_scheme_write(uuid: str, *, delay: float = 0.5) -> dict | None:
 #
 # Things has no native task-to-task relation. We synthesize "B blocks D" with a
 # tag + bidirectional deep links in notes:
-#   - the dependent D gets the `gated` tag and a `**Gated by:**` block listing
-#     each blocker as a named link `[title](things:///show?id=uuid)`
-#   - the blocker B gets a reciprocal `**Gates:**` block listing each dependent
+#   - the dependent D gets the `gated` tag and a `Gated by:` block listing each
+#     blocker as a title line + a `things:///show?id=uuid` deep-link line
+#   - the blocker B gets a reciprocal `Gates:` block listing each dependent
 #
 # Two correctness traps drive the read->splice->write-back design:
 #   - `set tag names` REPLACES the whole tag set, so adding `gated` must merge
@@ -203,18 +203,18 @@ def _verify_url_scheme_write(uuid: str, *, delay: float = 0.5) -> dict | None:
 
 _GATED_TAG = "gated"
 
-# The bold labels ARE the section structure: Things' notes render a tiny
-# Markdown subset (bold/italic/strikethrough/named links) -- no headings, no
-# horizontal rules -- so these labels are how a managed block is located.
-_REL_GATED_BY = "**Gated by:**"
-_REL_GATES = "**Gates:**"
+# Things 3 notes do NOT render Markdown -- no bold, no `[label](url)` named
+# links (verified in-app 2026-06-26: the literal `**` and `[]()` show). Things
+# only auto-linkifies a bare URL. So the managed block is plain text: a
+# `Gated by:` / `Gates:` label line, then per blocker a title line (kept
+# human-scannable) followed by the bare `things:///show?id=<uuid>` deep link on
+# its own line (which Things makes clickable). The label lines locate a block.
+_REL_GATED_BY = "Gated by:"
+_REL_GATES = "Gates:"
 
-# One managed entry: a named link to a Things item. The greedy title group
-# backtracks to the final `](things:///show?id=` so a title containing brackets
-# or parens still parses; the base62 uuid class bounds the id.
-_REL_ENTRY_RE = re.compile(
-    r"^\[(?P<title>.*)\]\(things:///show\?id=(?P<uuid>[A-Za-z0-9]{21,22})\)$"
-)
+# The deep-link line of a managed entry. The base62 uuid class bounds the id;
+# the line immediately above it is the entry's (free-text) title.
+_REL_URL_RE = re.compile(r"^things:///show\?id=(?P<uuid>[A-Za-z0-9]{21,22})$")
 
 
 def _set_notes(uuid: str, notes: str) -> None:
@@ -266,15 +266,20 @@ def _drop_tag(existing: list[str], tag: str) -> list[str]:
 
 
 def _render_relation_block(label: str, entries: list[tuple[str, str]]) -> str:
-    """Render a managed relation block as `label` + one named link per entry.
+    """Render a managed relation block: `label`, then a title line + a bare
+    deep-link line for each entry.
 
     `entries` is a list of (title, uuid). Returns "" when there are no entries
     (the caller drops the block entirely rather than leaving an empty label).
+    The bare URL line is what Things auto-linkifies; the title stays human
+    scannable on its own line (Things renders neither bold nor `[label](url)`).
     """
     if not entries:
         return ""
     lines = [label]
-    lines.extend(f"[{title}](things:///show?id={uuid})" for title, uuid in entries)
+    for title, uuid in entries:
+        lines.append(title)
+        lines.append(f"things:///show?id={uuid}")
     return "\n".join(lines)
 
 
@@ -283,11 +288,11 @@ def _parse_relation_block(
 ) -> tuple[str, list[tuple[str, str]]]:
     """Split notes into (text_without_block, entries) for the given `label`.
 
-    Locates the `label` line, consumes the contiguous following lines that are
-    managed entries, and returns the notes with that block (and the single
-    blank separator line preceding it, if any) removed, plus the parsed entries
-    as (title, uuid) pairs in document order. If the label is absent, returns
-    (notes, []). Inverse of _render_relation_block + _splice_notes.
+    Locates the `label` line, then consumes the contiguous (title line, deep-link
+    line) pairs that follow, and returns the notes with that block (and the
+    single blank separator line preceding it, if any) removed, plus the parsed
+    entries as (title, uuid) pairs in document order. If the label is absent,
+    returns (notes, []). Inverse of _render_relation_block + _splice_notes.
     """
     if not notes:
         return "", []
@@ -304,12 +309,14 @@ def _parse_relation_block(
             if out and out[-1].strip() == "":
                 out.pop()
             i += 1
-            while i < n:
-                m = _REL_ENTRY_RE.match(lines[i].strip())
+            # Consume (title, url) pairs: a title line immediately backed by a
+            # bare deep-link line. Stop at the first line with no URL beneath it.
+            while i + 1 < n:
+                m = _REL_URL_RE.match(lines[i + 1].strip())
                 if m is None:
                     break
-                entries.append((m.group("title"), m.group("uuid")))
-                i += 1
+                entries.append((lines[i].strip(), m.group("uuid")))
+                i += 2
             continue
         out.append(lines[i])
         i += 1
@@ -355,7 +362,7 @@ def _partial_link_message(
 
 
 def _unwire_gates_side(blocker_uuid: str, dependent_uuid: str) -> bool:
-    """Remove the dependent from the blocker's `**Gates:**` block.
+    """Remove the dependent from the blocker's `Gates:` block.
 
     Re-reads the blocker, drops the dependent's entry (collapsing the block if
     it empties), and writes the spliced notes back. Returns False if the blocker
@@ -376,7 +383,7 @@ def _unwire_gates_side(blocker_uuid: str, dependent_uuid: str) -> bool:
 
 
 def _unwire_gated_by_side(dependent_uuid: str, blocker_uuid: str) -> bool:
-    """Remove the blocker from the dependent's `**Gated by:**` block.
+    """Remove the blocker from the dependent's `Gated by:` block.
 
     Re-reads the dependent, drops the blocker's entry (collapsing the block if
     it empties), and -- only when no blockers remain -- drops the `gated` tag
@@ -1198,11 +1205,11 @@ def link_blocker(
 
     Atomically, on success:
       1. Merge the `gated` tag into the dependent's existing tags.
-      2. Ensure the dependent's `**Gated by:**` block links to the blocker.
-      3. Ensure the blocker's `**Gates:**` block links to the dependent.
+      2. Ensure the dependent's `Gated by:` block links to the blocker.
+      3. Ensure the blocker's `Gates:` block links to the dependent.
 
     Idempotent (a second identical call writes nothing) and many-to-many (a
-    dependent may be gated by several blockers; a blocker's `**Gates:**` grows).
+    dependent may be gated by several blockers; a blocker's `Gates:` grows).
     The dependent side is wired and verified first, then the blocker side: if
     the blocker side fails, the dependent is left correctly marked blocked and a
     PARTIAL_LINK error is returned (re-running completes it).
@@ -1305,8 +1312,8 @@ def unlink_blocker(
     """Remove a 'blocked by' relation: blocker_uuid no longer blocks dependent.
 
     The inverse of link_blocker, for manual/explicit resolution:
-      1. Drop the dependent from the blocker's `**Gates:**` block.
-      2. Drop the blocker from the dependent's `**Gated by:**` block.
+      1. Drop the dependent from the blocker's `Gates:` block.
+      2. Drop the blocker from the dependent's `Gated by:` block.
       3. Drop the `gated` tag from the dependent ONLY if it has no remaining
          blockers (merge-aware: other tags are preserved).
 
@@ -1371,12 +1378,12 @@ def reconcile_completion(*, uuid: str) -> SuccessResponse | ErrorResponse:
 
     Things has no event hooks, so relation cleanup is caller-triggered: invoke
     this when marking a task done. It scrubs both directions:
-      - As a dependent: for each blocker in its `**Gated by:**` block, remove
-        this task from that blocker's `**Gates:**` block (and clear its own
-        `**Gated by:**` + `gated` tag).
-      - As a blocker: for each task in its `**Gates:**` block, remove this task
-        from that dependent's `**Gated by:**` block, dropping the dependent's
-        `gated` tag if this was its last blocker (and clear its own `**Gates:**`).
+      - As a dependent: for each blocker in its `Gated by:` block, remove
+        this task from that blocker's `Gates:` block (and clear its own
+        `Gated by:` + `gated` tag).
+      - As a blocker: for each task in its `Gates:` block, remove this task
+        from that dependent's `Gated by:` block, dropping the dependent's
+        `gated` tag if this was its last blocker (and clear its own `Gates:`).
 
     Idempotent and safe on a task with no relations (a no-op). Verifies via
     things.get that no dangling reference to this task survives (CLAUDE.md
