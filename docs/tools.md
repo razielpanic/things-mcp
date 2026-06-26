@@ -1,6 +1,6 @@
 # Tool reference
 
-`things-mcp` exposes 16 MCP tools — 10 read tools and 6 write tools. You never need to call these directly; Claude picks the right tool based on what you ask. This page is for when you're curious what's available, or when something doesn't work and you want to know what Claude was probably trying to do.
+`things-mcp` exposes 19 MCP tools — 10 read tools and 9 write tools. You never need to call these directly; Claude picks the right tool based on what you ask. This page is for when you're curious what's available, or when something doesn't work and you want to know what Claude was probably trying to do.
 
 Every read response includes a `derived_list` field on each item showing the real list the item is in (Today, Upcoming, Anytime, Someday, Inbox, or Logbook). See [how-it-works.md](how-it-works.md) for why this matters.
 
@@ -114,12 +114,12 @@ The core temporal operation: change which computed view an item appears in. Maps
 
 ### `update_item`
 
-Updates title, notes, or tags on an existing item.
+Updates fields on an existing item: title, notes, tags, scheduling (`when`), deadline, completion/cancellation, and structural placement.
 
-**Args:** `uuid` (required), `title`, `notes`, `tags` (list)
+**Args:** `uuid` (required), `title`, `notes`, `when`, `deadline` (or `""` to clear), `tags` (comma-separated), `completed` (bool), `canceled` (bool), `project_uuid`, `area_uuid`
 **Returns:** `SuccessResponse` or `ErrorResponse`
 
-**Auth token required** for checklist updates on already-created items (this uses the `things:///update` protected endpoint). Basic title/notes/tags updates use AppleScript and don't need the auth token.
+**Replaces wholesale — caution with gated tasks:** `tags` and `notes` each *replace* the item's entire tag set / notes body; they don't merge. If the item was wired with `link_blocker`, updating its `tags` drops the `gated` tag and updating its `notes` wipes the `**Gated by:**` / `**Gates:**` blocks. Read the current value, splice your change in, and write it all back — or re-run `link_blocker` afterward. Uses AppleScript; no auth token needed.
 
 ### `move_to_context`
 
@@ -134,6 +134,33 @@ Moves an item to the Trash. Not a hard delete (Things 3 keeps trashed items unti
 
 **Args:** `uuid` (required)
 **Returns:** `SuccessResponse` on success, or `ErrorResponse` with `VERIFY_FAILED` if the item didn't actually end up in Trash after the operation
+
+### `link_blocker`
+
+Wires a "blocked by" dependency between two tasks. Things has no native task-to-task relation, so this synthesizes one: the dependent (blocked) task gets the `gated` tag plus a `**Gated by:**` link to the blocker in its notes, and the blocker gets a reciprocal `**Gates:**` link to the dependent. Tags and notes are *merged*, so existing tags and user-written notes survive.
+
+**Args:** `blocker_uuid` (required — the task that must finish first), `dependent_uuid` (required — the blocked task; receives the `gated` tag)
+**Returns:** `SuccessResponse` (action `linked_blocker`), or an `ErrorResponse` with `PARTIAL_LINK` if only the dependent side landed (re-run to complete — it's idempotent)
+
+**Notable:** Idempotent (calling twice changes nothing) and many-to-many (a task can be gated by several blockers, and one blocker can gate many tasks). Both sides are verified after writing. Always wire blockers through this verb rather than hand-editing notes, so the two sides never drift apart.
+
+### `unlink_blocker`
+
+The inverse of `link_blocker`, for explicit/manual resolution. Removes the dependent's link from the blocker's `**Gates:**` block and the blocker's link from the dependent's `**Gated by:**` block. The `gated` tag comes off the dependent **only** when it has no blockers left — its other tags and any remaining blockers are untouched.
+
+**Args:** `blocker_uuid` (required), `dependent_uuid` (required)
+**Returns:** `SuccessResponse` (action `unlinked_blocker`) or `ErrorResponse`
+
+**Notable:** Idempotent, and tolerant of a missing item — if one side was already trashed, the other side is still cleaned. For automatic cleanup when a task is finished, prefer `reconcile_completion`.
+
+### `reconcile_completion`
+
+Cleanup verb to call when a task is completed or canceled. Things has no event hooks, so relation cleanup is caller-triggered. Scrubs every blocker relation the task is part of, in both directions: it removes the task from every blocker's `**Gates:**` block and every dependent's `**Gated by:**` block (dropping that dependent's `gated` tag when this was its last blocker), and clears the task's own managed blocks.
+
+**Args:** `uuid` (required — the task just completed or canceled)
+**Returns:** `SuccessResponse` (action `reconciled`) or `ErrorResponse`
+
+**Notable:** Idempotent and safe on a task with no relations (a no-op). Call it right after marking a blocked or blocking task done, so no dangling `gated` tags or stale links are left behind.
 
 ## Response shapes
 
