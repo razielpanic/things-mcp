@@ -445,11 +445,15 @@ async def update_item(
         title: New title -- one action as a GTD verb phrase (to-dos) or a bare
             noun phrase (projects). No dates, tags, or metadata in the title;
             use the dedicated fields below.
-        notes: New notes (replaces existing). Description, context, history, and
-            multi-line detail belong here, not in the title.
+        notes: New notes (REPLACES the whole body, not a merge). If the item was
+            wired with link_blocker, this wipes its ``**Gated by:**`` /
+            ``**Gates:**`` blocks -- read the current notes, splice your change
+            in, and write it all back, or re-run link_blocker afterward.
         when: Reschedule -- triggers state transition (see schedule_item).
         deadline: New deadline as "YYYY-MM-DD", or "" to clear.
-        tags: New comma-separated tags (replaces existing).
+        tags: New comma-separated tags (REPLACES the whole set, not a merge). If
+            the item is ``gated`` (see link_blocker), include ``gated`` here or
+            it is dropped -- re-run link_blocker afterward if you clobber it.
         completed: Set to true to mark complete. Status -> completed, item
             moves to Logbook (overrides temporal placement).
         canceled: Set to true to cancel. Status -> canceled, item moves to
