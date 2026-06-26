@@ -252,6 +252,8 @@ Common error codes:
 - **`INVALID_DATE`** — `when` or `deadline` isn't a valid date string.
 - **`NO_AUTH_TOKEN`** — Operation requires `~/.things-auth` (see [setup.md](setup.md#step-5-optional-set-up-the-auth-token)).
 - **`VERIFY_FAILED`** — The write dispatched but verification afterward couldn't find the expected result. Usually means Things 3 silently rejected the operation.
+- **`NOT_FOUND`** — The given UUID doesn't exist (e.g. `get_item`, or a blocker/dependent passed to `link_blocker`).
+- **`PARTIAL_LINK`** — `link_blocker` wired the dependent side (`gated` tag + "Gated by" link) but the blocker side didn't land. Re-run `link_blocker` to finish — it's idempotent.
 - **`READ_ERROR`** / **`WRITE_ERROR`** — generic catch-alls for unexpected exceptions.
 
 ## Further reading
