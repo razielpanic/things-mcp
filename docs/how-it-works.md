@@ -87,6 +87,7 @@ This MCP uses AppleScript for almost everything:
 - `move_to_context` — AppleScript `set project of` / `set area of`
 - `delete_item` — AppleScript `move to list "Trash"`
 - `update_item` (title, notes, tags) — AppleScript
+- `link_blocker` / `unlink_blocker` / `reconcile_completion` — AppleScript (`set tag names`, `set notes`). Things has no native task-to-task relation, so these synthesize a "blocked by" link: the dependent gets the `gated` tag and a `Gated by:` block, the blocker a reciprocal `Gates:` block, each entry a title line + a bare `things:///show?id=…` deep link. Tags and notes are read-merged-rewritten (never clobbered), and both sides are verified.
 
 The only times it uses the URL scheme:
 

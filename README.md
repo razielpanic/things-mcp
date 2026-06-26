@@ -30,6 +30,9 @@ Once installed, you just talk to Claude normally:
 > **You:** Add a packing checklist to "Trip to Portland": passport, chargers, running shoes, rain jacket.
 > **Claude:** *(calls `create_todo` with a checklist)* Done.
 
+> **You:** "Submit grant report" is blocked by "Get board signoffs" — link them.
+> **Claude:** *(calls `link_blocker`)* Done. "Submit grant report" now carries a `gated` tag and a "Gated by" link to "Get board signoffs," with a reciprocal "Gates" link on the blocker. Mark either one done and I'll clear the link.
+
 Claude handles the tool-calling automatically — you don't need to know or care about the tool names. But if you're curious, there's a [full tool reference](docs/tools.md).
 
 ## Install
