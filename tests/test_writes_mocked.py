@@ -682,3 +682,102 @@ class TestLinkBlocker:
     def test_invalid_uuid(self):
         with pytest.raises(ValueError, match="Invalid UUID"):
             writes.link_blocker(blocker_uuid="bad", dependent_uuid=DEP)
+
+
+class TestUnlinkBlocker:
+    """unlink_blocker: tear down a relation, dropping `gated` only when last."""
+
+    @patch("things_mcp.writes.run_applescript")
+    @patch("things_mcp.writes.things.get")
+    def test_removes_both_sides_and_gated_tag(self, mock_get, mock_run):
+        fake = FakeThings()
+        fake.add(BLK, title="Blocker")
+        fake.add(DEP, title="Dependent", tags=["home"])
+        mock_get.side_effect = fake.get
+        mock_run.side_effect = fake.run_applescript
+        writes.link_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+
+        result = writes.unlink_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+
+        assert isinstance(result, SuccessResponse)
+        assert result.action == "unlinked_blocker"
+        # Dependent fully cleaned: no gated tag, no Gated by reference.
+        assert "gated" not in fake.store[DEP]["tags"]
+        assert "home" in fake.store[DEP]["tags"]  # other tags preserved
+        assert f"things:///show?id={BLK}" not in (fake.store[DEP]["notes"] or "")
+        # Blocker no longer references the dependent.
+        assert f"things:///show?id={DEP}" not in (fake.store[BLK]["notes"] or "")
+
+    @patch("things_mcp.writes.run_applescript")
+    @patch("things_mcp.writes.things.get")
+    def test_keeps_gated_when_another_blocker_remains(self, mock_get, mock_run):
+        fake = FakeThings()
+        fake.add(BLK, title="Blocker One")
+        fake.add(BLK2, title="Blocker Two")
+        fake.add(DEP, title="Dependent")
+        mock_get.side_effect = fake.get
+        mock_run.side_effect = fake.run_applescript
+        writes.link_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+        writes.link_blocker(blocker_uuid=BLK2, dependent_uuid=DEP)
+
+        # Drop only the first blocker.
+        writes.unlink_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+
+        # `gated` stays because BLK2 still blocks DEP.
+        assert "gated" in fake.store[DEP]["tags"]
+        notes = fake.store[DEP]["notes"]
+        assert f"things:///show?id={BLK}" not in notes
+        assert f"things:///show?id={BLK2}" in notes
+        # BLK no longer gates DEP; BLK2 still does.
+        assert f"things:///show?id={DEP}" not in (fake.store[BLK]["notes"] or "")
+        assert f"things:///show?id={DEP}" in fake.store[BLK2]["notes"]
+
+    @patch("things_mcp.writes.run_applescript")
+    @patch("things_mcp.writes.things.get")
+    def test_idempotent_second_unlink_is_noop(self, mock_get, mock_run):
+        fake = FakeThings()
+        fake.add(BLK, title="Blocker")
+        fake.add(DEP, title="Dependent")
+        mock_get.side_effect = fake.get
+        mock_run.side_effect = fake.run_applescript
+        writes.link_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+        writes.unlink_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+        writes_after_first = len(fake.write_calls())
+
+        result = writes.unlink_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+
+        assert isinstance(result, SuccessResponse)
+        assert len(fake.write_calls()) == writes_after_first  # no further writes
+
+    @patch("things_mcp.writes.run_applescript")
+    @patch("things_mcp.writes.things.get")
+    def test_tolerant_of_missing_blocker(self, mock_get, mock_run):
+        fake = FakeThings()
+        fake.add(BLK, title="Blocker")
+        fake.add(DEP, title="Dependent")
+        mock_get.side_effect = fake.get
+        mock_run.side_effect = fake.run_applescript
+        writes.link_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+        # Blocker vanishes (e.g. trashed) -- the dependent side must still clean.
+        del fake.store[BLK]
+
+        result = writes.unlink_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+
+        assert isinstance(result, SuccessResponse)
+        assert "gated" not in fake.store[DEP]["tags"]
+        assert f"things:///show?id={BLK}" not in (fake.store[DEP]["notes"] or "")
+
+    @patch("things_mcp.writes.run_applescript")
+    @patch("things_mcp.writes.things.get")
+    def test_neither_exists_returns_not_found(self, mock_get, mock_run):
+        fake = FakeThings()  # empty store
+        mock_get.side_effect = fake.get
+        mock_run.side_effect = fake.run_applescript
+
+        result = writes.unlink_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+        assert isinstance(result, ErrorResponse)
+        assert result.error == "NOT_FOUND"
+
+    def test_invalid_uuid(self):
+        with pytest.raises(ValueError, match="Invalid UUID"):
+            writes.unlink_blocker(blocker_uuid=BLK, dependent_uuid="bad")

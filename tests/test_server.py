@@ -33,6 +33,7 @@ from things_mcp.server import (
     link_blocker,
     schedule_item,
     search,
+    unlink_blocker,
 )
 
 
@@ -194,6 +195,18 @@ class TestWriteHandlers:
         mock_fn.side_effect = RuntimeError("AppleScript failed")
         result = await link_blocker(blocker_uuid="B" * 22, dependent_uuid="D" * 22)
         assert result["error"] == "WRITE_ERROR"
+
+    @patch("things_mcp.server.writes.unlink_blocker")
+    async def test_unlink_blocker_success(self, mock_fn):
+        mock_fn.return_value = SuccessResponse(
+            uuid="D" * 22, message="Unlinked", action="unlinked_blocker"
+        )
+        result = await unlink_blocker(blocker_uuid="B" * 22, dependent_uuid="D" * 22)
+        assert result["success"] is True
+        assert result["action"] == "unlinked_blocker"
+        mock_fn.assert_called_once_with(
+            blocker_uuid="B" * 22, dependent_uuid="D" * 22
+        )
 
 
 class TestErrorHandling:

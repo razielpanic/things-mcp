@@ -260,6 +260,11 @@ def _merge_tag(existing: list[str], tag: str) -> list[str]:
     return [*existing, tag]
 
 
+def _drop_tag(existing: list[str], tag: str) -> list[str]:
+    """Return existing tags minus `tag`, order-preserving."""
+    return [t for t in existing if t != tag]
+
+
 def _render_relation_block(label: str, entries: list[tuple[str, str]]) -> str:
     """Render a managed relation block as `label` + one named link per entry.
 
@@ -347,6 +352,54 @@ def _partial_link_message(
         f"the blocker side ({blocker_uuid} 'Gates' link) did not land{detail}. "
         "Re-run link_blocker to complete -- it is idempotent."
     )
+
+
+def _unwire_gates_side(blocker_uuid: str, dependent_uuid: str) -> bool:
+    """Remove the dependent from the blocker's `**Gates:**` block.
+
+    Re-reads the blocker, drops the dependent's entry (collapsing the block if
+    it empties), and writes the spliced notes back. Returns False if the blocker
+    no longer exists (nothing to unwire), True otherwise. Idempotent: a blocker
+    that never referenced the dependent is left untouched.
+    """
+    blocker = things.get(blocker_uuid)
+    if blocker is None:
+        return False
+    notes = blocker.get("notes") or ""
+    text, entries = _parse_relation_block(notes, _REL_GATES)
+    remaining = [(t, u) for (t, u) in entries if u != dependent_uuid]
+    if len(remaining) != len(entries):
+        _set_notes(
+            blocker_uuid, _splice_notes(text, _render_relation_block(_REL_GATES, remaining))
+        )
+    return True
+
+
+def _unwire_gated_by_side(dependent_uuid: str, blocker_uuid: str) -> bool:
+    """Remove the blocker from the dependent's `**Gated by:**` block.
+
+    Re-reads the dependent, drops the blocker's entry (collapsing the block if
+    it empties), and -- only when no blockers remain -- drops the `gated` tag
+    (merge-aware: the dependent's other tags are preserved). Returns False if
+    the dependent no longer exists, True otherwise. Idempotent.
+    """
+    dependent = things.get(dependent_uuid)
+    if dependent is None:
+        return False
+    notes = dependent.get("notes") or ""
+    text, entries = _parse_relation_block(notes, _REL_GATED_BY)
+    remaining = [(t, u) for (t, u) in entries if u != blocker_uuid]
+    if len(remaining) != len(entries):
+        _set_notes(
+            dependent_uuid,
+            _splice_notes(text, _render_relation_block(_REL_GATED_BY, remaining)),
+        )
+    # Drop `gated` only when the last blocker is gone.
+    if not remaining:
+        tags = dependent.get("tags") or []
+        if _GATED_TAG in tags:
+            _set_tag_names(dependent_uuid, _drop_tag(tags, _GATED_TAG))
+    return True
 
 
 def schedule_item(
@@ -1240,5 +1293,74 @@ def link_blocker(
             f"Linked: {dependent_title!r} is gated by {blocker_title!r}."
         ),
         action="linked_blocker",
+        temporal_state=_read_temporal_state(dependent_uuid),
+    )
+
+
+def unlink_blocker(
+    *,
+    blocker_uuid: str,
+    dependent_uuid: str,
+) -> SuccessResponse | ErrorResponse:
+    """Remove a 'blocked by' relation: blocker_uuid no longer blocks dependent.
+
+    The inverse of link_blocker, for manual/explicit resolution:
+      1. Drop the dependent from the blocker's `**Gates:**` block.
+      2. Drop the blocker from the dependent's `**Gated by:**` block.
+      3. Drop the `gated` tag from the dependent ONLY if it has no remaining
+         blockers (merge-aware: other tags are preserved).
+
+    Idempotent and tolerant: an item that no longer exists has its side skipped
+    (its counterpart is still cleaned), so this also unwinds a half-broken link.
+    """
+    _validate_uuid(blocker_uuid)
+    _validate_uuid(dependent_uuid)
+
+    blocker_exists = things.get(blocker_uuid) is not None
+    dependent_exists = things.get(dependent_uuid) is not None
+    if not blocker_exists and not dependent_exists:
+        return ErrorResponse(
+            error="NOT_FOUND",
+            message=f"Neither {blocker_uuid} nor {dependent_uuid} exists.",
+        )
+
+    _unwire_gates_side(blocker_uuid, dependent_uuid)
+    _unwire_gated_by_side(dependent_uuid, blocker_uuid)
+
+    # Verify the unwiring (CLAUDE.md rule 8): neither side may still reference
+    # the other, and a now-blocker-less dependent must have shed `gated`.
+    blk_after = things.get(blocker_uuid)
+    if blk_after is not None and _relation_present(
+        blk_after.get("notes"), _REL_GATES, dependent_uuid
+    ):
+        return ErrorResponse(
+            error="VERIFY_FAILED",
+            message=f"Blocker {blocker_uuid} still gates {dependent_uuid} after unlink.",
+        )
+
+    dep_after = things.get(dependent_uuid)
+    if dep_after is not None:
+        if _relation_present(dep_after.get("notes"), _REL_GATED_BY, blocker_uuid):
+            return ErrorResponse(
+                error="VERIFY_FAILED",
+                message=(
+                    f"Dependent {dependent_uuid} is still gated by "
+                    f"{blocker_uuid} after unlink."
+                ),
+            )
+        _, dep_blockers = _parse_relation_block(dep_after.get("notes"), _REL_GATED_BY)
+        if not dep_blockers and _GATED_TAG in (dep_after.get("tags") or []):
+            return ErrorResponse(
+                error="VERIFY_FAILED",
+                message=(
+                    f"Dependent {dependent_uuid} kept the `gated` tag despite "
+                    "having no remaining blockers."
+                ),
+            )
+
+    return SuccessResponse(
+        uuid=dependent_uuid,
+        message=f"Unlinked: {dependent_uuid} no longer gated by {blocker_uuid}.",
+        action="unlinked_blocker",
         temporal_state=_read_temporal_state(dependent_uuid),
     )

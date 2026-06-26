@@ -578,6 +578,35 @@ async def link_blocker(blocker_uuid: str, dependent_uuid: str) -> dict:
         return ErrorResponse(error="WRITE_ERROR", message=str(e)).model_dump()
 
 
+@mcp.tool()
+async def unlink_blocker(blocker_uuid: str, dependent_uuid: str) -> dict:
+    """Remove a 'blocked by' dependency: blocker_uuid no longer blocks dependent.
+
+    The inverse of link_blocker, for explicit/manual resolution. Drops the
+    dependent's link from the blocker's ``**Gates:**`` block and the blocker's
+    link from the dependent's ``**Gated by:**`` block, collapsing either block
+    when it empties. The ``gated`` tag is removed from the dependent ONLY when
+    no blockers remain -- its other tags and any remaining blockers are left
+    intact. Idempotent; verifies both sides via things.get before reporting.
+
+    For automatic cleanup when a task is completed/canceled, use
+    reconcile_completion instead -- it scrubs every relation in one call.
+
+    Args:
+        blocker_uuid: The blocker to detach.
+        dependent_uuid: The formerly-blocked task.
+    """
+    try:
+        result = writes.unlink_blocker(
+            blocker_uuid=blocker_uuid, dependent_uuid=dependent_uuid
+        )
+        return result.model_dump()
+    except sqlite3.OperationalError:
+        return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
+    except Exception as e:
+        return ErrorResponse(error="WRITE_ERROR", message=str(e)).model_dump()
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
