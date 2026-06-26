@@ -1364,3 +1364,78 @@ def unlink_blocker(
         action="unlinked_blocker",
         temporal_state=_read_temporal_state(dependent_uuid),
     )
+
+
+def reconcile_completion(*, uuid: str) -> SuccessResponse | ErrorResponse:
+    """Scrub every blocker relation a just-completed/canceled task is part of.
+
+    Things has no event hooks, so relation cleanup is caller-triggered: invoke
+    this when marking a task done. It scrubs both directions:
+      - As a dependent: for each blocker in its `**Gated by:**` block, remove
+        this task from that blocker's `**Gates:**` block (and clear its own
+        `**Gated by:**` + `gated` tag).
+      - As a blocker: for each task in its `**Gates:**` block, remove this task
+        from that dependent's `**Gated by:**` block, dropping the dependent's
+        `gated` tag if this was its last blocker (and clear its own `**Gates:**`).
+
+    Idempotent and safe on a task with no relations (a no-op). Verifies via
+    things.get that no dangling reference to this task survives (CLAUDE.md
+    rule 8).
+    """
+    _validate_uuid(uuid)
+
+    item = things.get(uuid)
+    if item is None:
+        return ErrorResponse(error="NOT_FOUND", message=f"Item {uuid} not found.")
+
+    notes = item.get("notes") or ""
+    _, blockers = _parse_relation_block(notes, _REL_GATED_BY)  # uuid as dependent
+    _, dependents = _parse_relation_block(notes, _REL_GATES)  # uuid as blocker
+
+    # As a dependent: detach uuid from each blocker, both directions.
+    for _title, blocker_uuid in blockers:
+        _unwire_gates_side(blocker_uuid, uuid)
+        _unwire_gated_by_side(uuid, blocker_uuid)
+    # As a blocker: detach uuid from each dependent, both directions.
+    for _title, dependent_uuid in dependents:
+        _unwire_gated_by_side(dependent_uuid, uuid)
+        _unwire_gates_side(uuid, dependent_uuid)
+
+    # Verify (CLAUDE.md rule 8): uuid carries no managed block, and no
+    # counterpart still references it.
+    after = things.get(uuid)
+    if after is not None:
+        after_notes = after.get("notes") or ""
+        if _parse_relation_block(after_notes, _REL_GATED_BY)[1] or _parse_relation_block(
+            after_notes, _REL_GATES
+        )[1]:
+            return ErrorResponse(
+                error="VERIFY_FAILED",
+                message=f"Item {uuid} still carries a managed relation block after reconcile.",
+            )
+    for _title, blocker_uuid in blockers:
+        counterpart = things.get(blocker_uuid)
+        if counterpart is not None and _relation_present(
+            counterpart.get("notes"), _REL_GATES, uuid
+        ):
+            return ErrorResponse(
+                error="VERIFY_FAILED",
+                message=f"Blocker {blocker_uuid} still references {uuid} after reconcile.",
+            )
+    for _title, dependent_uuid in dependents:
+        counterpart = things.get(dependent_uuid)
+        if counterpart is not None and _relation_present(
+            counterpart.get("notes"), _REL_GATED_BY, uuid
+        ):
+            return ErrorResponse(
+                error="VERIFY_FAILED",
+                message=f"Dependent {dependent_uuid} still references {uuid} after reconcile.",
+            )
+
+    count = len(blockers) + len(dependents)
+    return SuccessResponse(
+        uuid=uuid,
+        message=f"Reconciled {count} blocker relation(s) for {uuid}.",
+        action="reconciled",
+        temporal_state=_read_temporal_state(uuid),
+    )

@@ -781,3 +781,143 @@ class TestUnlinkBlocker:
     def test_invalid_uuid(self):
         with pytest.raises(ValueError, match="Invalid UUID"):
             writes.unlink_blocker(blocker_uuid=BLK, dependent_uuid="bad")
+
+
+class TestReconcileCompletion:
+    """reconcile_completion: scrub a done task's relations, both directions."""
+
+    @patch("things_mcp.writes.run_applescript")
+    @patch("things_mcp.writes.things.get")
+    def test_reconcile_dependent_scrubs_blocker_side(self, mock_get, mock_run):
+        fake = FakeThings()
+        fake.add(BLK, title="Blocker")
+        fake.add(DEP, title="Dependent")
+        mock_get.side_effect = fake.get
+        mock_run.side_effect = fake.run_applescript
+        writes.link_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+
+        # The blocked task gets completed -> reconcile it.
+        result = writes.reconcile_completion(uuid=DEP)
+
+        assert isinstance(result, SuccessResponse)
+        assert result.action == "reconciled"
+        # The completed task is clean...
+        assert "gated" not in fake.store[DEP]["tags"]
+        assert "**Gated by:**" not in (fake.store[DEP]["notes"] or "")
+        # ...and the blocker no longer dangles a 'Gates' link to it.
+        assert f"things:///show?id={DEP}" not in (fake.store[BLK]["notes"] or "")
+
+    @patch("things_mcp.writes.run_applescript")
+    @patch("things_mcp.writes.things.get")
+    def test_reconcile_blocker_scrubs_dependent_side(self, mock_get, mock_run):
+        fake = FakeThings()
+        fake.add(BLK, title="Blocker")
+        fake.add(DEP, title="Dependent")
+        mock_get.side_effect = fake.get
+        mock_run.side_effect = fake.run_applescript
+        writes.link_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+
+        # The blocker gets completed -> reconcile it.
+        result = writes.reconcile_completion(uuid=BLK)
+
+        assert isinstance(result, SuccessResponse)
+        # The blocker is clean...
+        assert "**Gates:**" not in (fake.store[BLK]["notes"] or "")
+        # ...and the freed dependent loses both the link and the `gated` tag.
+        assert f"things:///show?id={BLK}" not in (fake.store[DEP]["notes"] or "")
+        assert "gated" not in fake.store[DEP]["tags"]
+
+    @patch("things_mcp.writes.run_applescript")
+    @patch("things_mcp.writes.things.get")
+    def test_reconcile_scrubs_both_directions_at_once(self, mock_get, mock_run):
+        # DEP is simultaneously a blocker (of DEP2) and a dependent (of BLK).
+        fake = FakeThings()
+        fake.add(BLK, title="Upstream")
+        fake.add(DEP, title="Middle")
+        fake.add(DEP2, title="Downstream")
+        mock_get.side_effect = fake.get
+        mock_run.side_effect = fake.run_applescript
+        writes.link_blocker(blocker_uuid=BLK, dependent_uuid=DEP)  # BLK gates DEP
+        writes.link_blocker(blocker_uuid=DEP, dependent_uuid=DEP2)  # DEP gates DEP2
+
+        result = writes.reconcile_completion(uuid=DEP)
+
+        assert isinstance(result, SuccessResponse)
+        # Upstream side: BLK no longer gates DEP.
+        assert f"things:///show?id={DEP}" not in (fake.store[BLK]["notes"] or "")
+        # Downstream side: DEP2 freed (link gone, tag gone).
+        assert f"things:///show?id={DEP}" not in (fake.store[DEP2]["notes"] or "")
+        assert "gated" not in fake.store[DEP2]["tags"]
+        # DEP itself carries no managed block and no `gated` tag.
+        assert "**Gated by:**" not in (fake.store[DEP]["notes"] or "")
+        assert "**Gates:**" not in (fake.store[DEP]["notes"] or "")
+        assert "gated" not in fake.store[DEP]["tags"]
+
+    @patch("things_mcp.writes.run_applescript")
+    @patch("things_mcp.writes.things.get")
+    def test_reconcile_keeps_gated_for_remaining_blocker(self, mock_get, mock_run):
+        fake = FakeThings()
+        fake.add(BLK, title="Blocker One")
+        fake.add(BLK2, title="Blocker Two")
+        fake.add(DEP, title="Dependent")
+        mock_get.side_effect = fake.get
+        mock_run.side_effect = fake.run_applescript
+        writes.link_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+        writes.link_blocker(blocker_uuid=BLK2, dependent_uuid=DEP)
+
+        # Only the first blocker completes.
+        writes.reconcile_completion(uuid=BLK)
+
+        # DEP stays gated because BLK2 still blocks it.
+        assert "gated" in fake.store[DEP]["tags"]
+        assert f"things:///show?id={BLK}" not in fake.store[DEP]["notes"]
+        assert f"things:///show?id={BLK2}" in fake.store[DEP]["notes"]
+
+    @patch("things_mcp.writes.run_applescript")
+    @patch("things_mcp.writes.things.get")
+    def test_reconcile_no_relations_is_noop(self, mock_get, mock_run):
+        fake = FakeThings()
+        fake.add(VALID_UUID, title="Lonely task", notes="plain notes", tags=["work"])
+        mock_get.side_effect = fake.get
+        mock_run.side_effect = fake.run_applescript
+
+        result = writes.reconcile_completion(uuid=VALID_UUID)
+
+        assert isinstance(result, SuccessResponse)
+        assert "Reconciled 0" in result.message
+        # A task with no relations is never written to.
+        assert fake.write_calls() == []
+        assert fake.store[VALID_UUID]["notes"] == "plain notes"
+        assert fake.store[VALID_UUID]["tags"] == ["work"]
+
+    @patch("things_mcp.writes.run_applescript")
+    @patch("things_mcp.writes.things.get")
+    def test_reconcile_idempotent(self, mock_get, mock_run):
+        fake = FakeThings()
+        fake.add(BLK, title="Blocker")
+        fake.add(DEP, title="Dependent")
+        mock_get.side_effect = fake.get
+        mock_run.side_effect = fake.run_applescript
+        writes.link_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+        writes.reconcile_completion(uuid=DEP)
+        writes_after_first = len(fake.write_calls())
+
+        result = writes.reconcile_completion(uuid=DEP)
+
+        assert isinstance(result, SuccessResponse)
+        assert len(fake.write_calls()) == writes_after_first  # no further writes
+
+    @patch("things_mcp.writes.run_applescript")
+    @patch("things_mcp.writes.things.get")
+    def test_reconcile_not_found(self, mock_get, mock_run):
+        fake = FakeThings()  # empty store
+        mock_get.side_effect = fake.get
+        mock_run.side_effect = fake.run_applescript
+
+        result = writes.reconcile_completion(uuid=DEP)
+        assert isinstance(result, ErrorResponse)
+        assert result.error == "NOT_FOUND"
+
+    def test_invalid_uuid(self):
+        with pytest.raises(ValueError, match="Invalid UUID"):
+            writes.reconcile_completion(uuid="bad")

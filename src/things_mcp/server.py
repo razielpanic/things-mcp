@@ -607,6 +607,30 @@ async def unlink_blocker(blocker_uuid: str, dependent_uuid: str) -> dict:
         return ErrorResponse(error="WRITE_ERROR", message=str(e)).model_dump()
 
 
+@mcp.tool()
+async def reconcile_completion(uuid: str) -> dict:
+    """Scrub every blocker relation a just-completed/canceled task is part of.
+
+    Things has no event hooks, so blocker-relation cleanup is caller-triggered:
+    call this when you mark a task complete or canceled. It removes the task
+    from both directions -- every blocker's ``**Gates:**`` block that named it,
+    and every dependent's ``**Gated by:**`` block that named it (dropping that
+    dependent's ``gated`` tag when this was its last blocker) -- and clears the
+    task's own managed blocks. Idempotent and safe on a task with no relations
+    (a no-op). Verifies via things.get that no dangling reference survives.
+
+    Args:
+        uuid: The task that was just completed or canceled.
+    """
+    try:
+        result = writes.reconcile_completion(uuid=uuid)
+        return result.model_dump()
+    except sqlite3.OperationalError:
+        return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
+    except Exception as e:
+        return ErrorResponse(error="WRITE_ERROR", message=str(e)).model_dump()
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
