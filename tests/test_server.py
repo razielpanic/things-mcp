@@ -30,6 +30,7 @@ from things_mcp.server import (
     get_someday,
     get_today,
     get_upcoming,
+    link_blocker,
     schedule_item,
     search,
 )
@@ -175,6 +176,24 @@ class TestWriteHandlers:
         result = await delete_item(uuid="A" * 22)
         assert result["success"] is True
         mock_fn.assert_called_once_with(uuid="A" * 22)
+
+    @patch("things_mcp.server.writes.link_blocker")
+    async def test_link_blocker_success(self, mock_fn):
+        mock_fn.return_value = SuccessResponse(
+            uuid="D" * 22, message="Linked", action="linked_blocker"
+        )
+        result = await link_blocker(blocker_uuid="B" * 22, dependent_uuid="D" * 22)
+        assert result["success"] is True
+        assert result["action"] == "linked_blocker"
+        mock_fn.assert_called_once_with(
+            blocker_uuid="B" * 22, dependent_uuid="D" * 22
+        )
+
+    @patch("things_mcp.server.writes.link_blocker")
+    async def test_link_blocker_write_error(self, mock_fn):
+        mock_fn.side_effect = RuntimeError("AppleScript failed")
+        result = await link_blocker(blocker_uuid="B" * 22, dependent_uuid="D" * 22)
+        assert result["error"] == "WRITE_ERROR"
 
 
 class TestErrorHandling:

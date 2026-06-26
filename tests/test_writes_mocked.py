@@ -7,6 +7,7 @@ the proper error responses are returned.
 
 from __future__ import annotations
 
+import re
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,6 +17,12 @@ from things_mcp.models import ErrorResponse, SuccessResponse
 
 VALID_UUID = "A" * 22
 ALT_UUID = "B" * 22
+
+# Distinct UUIDs for blocker-relation tests (blocker / dependent pairs).
+BLK = "B" * 22
+DEP = "D" * 22
+BLK2 = "E" * 22
+DEP2 = "F" * 22
 
 
 def _mock_subprocess_ok():
@@ -50,6 +57,65 @@ def _raw_task(uuid=VALID_UUID, **overrides):
     }
     base.update(overrides)
     return base
+
+
+class FakeThings:
+    """In-memory Things stand-in for blocker-relation verb tests.
+
+    ``things.get`` reads from the store; the verbs' AppleScript writes (``set
+    notes`` / ``set tag names``) are interpreted and applied back to the store,
+    so each verb's full read -> splice -> write-back -> verify loop runs against
+    live, mutating state. This is what lets us assert idempotency, tag merging,
+    and both-direction scrubbing end-to-end rather than per-call.
+    """
+
+    def __init__(self):
+        self.store: dict[str, dict] = {}
+        self.calls: list[tuple[str, tuple]] = []
+        self.fail_notes: set[str] = set()
+
+    def add(self, uuid, title="Task", notes=None, tags=None, status="incomplete"):
+        self.store[uuid] = _raw_task(
+            uuid=uuid,
+            title=title,
+            notes=notes,
+            tags=list(tags or []),
+            status=status,
+        )
+        return uuid
+
+    def get(self, uuid):
+        item = self.store.get(uuid)
+        if item is None:
+            return None
+        # Copy so a verb's in-memory edits never leak back without a write.
+        clone = dict(item)
+        clone["tags"] = list(item["tags"])
+        return clone
+
+    def run_applescript(self, script, *args):
+        self.calls.append((script, args))
+        m = re.search(r'to do id "([A-Za-z0-9]{21,22})"', script)
+        uuid = m.group(1) if m else None
+        if uuid is None or uuid not in self.store:
+            return ""
+        if "set notes of theToDo" in script:
+            if uuid in self.fail_notes:
+                raise RuntimeError("AppleScript error: simulated notes-write failure")
+            self.store[uuid]["notes"] = args[0]
+        elif "set tag names of theToDo" in script:
+            self.store[uuid]["tags"] = [
+                t.strip() for t in args[0].split(",") if t.strip()
+            ]
+        return ""
+
+    def write_calls(self):
+        """AppleScript calls that actually mutate state (notes/tags)."""
+        return [
+            c
+            for c in self.calls
+            if "set notes of theToDo" in c[0] or "set tag names of theToDo" in c[0]
+        ]
 
 
 class TestScheduleItem:
@@ -467,3 +533,152 @@ class TestSilentCompletionGuard:
 
         assert isinstance(result, ErrorResponse)
         assert result.error == "UNEXPECTED_STATUS_CHANGE"
+
+
+class TestLinkBlocker:
+    """link_blocker: wire a 'blocked by' relation across both items."""
+
+    @patch("things_mcp.writes.run_applescript")
+    @patch("things_mcp.writes.things.get")
+    def test_links_both_sides_and_merges_tag(self, mock_get, mock_run):
+        fake = FakeThings()
+        fake.add(BLK, title="Blocker", tags=["work"])
+        fake.add(DEP, title="Dependent", tags=["home"])
+        mock_get.side_effect = fake.get
+        mock_run.side_effect = fake.run_applescript
+
+        result = writes.link_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+
+        assert isinstance(result, SuccessResponse)
+        assert result.action == "linked_blocker"
+        # Tag merge preserves the dependent's existing tags (no clobber).
+        assert fake.store[DEP]["tags"] == ["home", "gated"]
+        # Dependent -> blocker under Gated by.
+        assert "**Gated by:**" in fake.store[DEP]["notes"]
+        assert f"things:///show?id={BLK}" in fake.store[DEP]["notes"]
+        # Blocker -> dependent under Gates.
+        assert "**Gates:**" in fake.store[BLK]["notes"]
+        assert f"things:///show?id={DEP}" in fake.store[BLK]["notes"]
+
+    @patch("things_mcp.writes.run_applescript")
+    @patch("things_mcp.writes.things.get")
+    def test_preserves_user_notes(self, mock_get, mock_run):
+        fake = FakeThings()
+        fake.add(BLK, title="Blocker", notes="blocker prose")
+        fake.add(DEP, title="Dependent", notes="dependent prose")
+        mock_get.side_effect = fake.get
+        mock_run.side_effect = fake.run_applescript
+
+        writes.link_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+
+        # User-authored notes survive above the managed block.
+        assert fake.store[DEP]["notes"].startswith("dependent prose")
+        assert "**Gated by:**" in fake.store[DEP]["notes"]
+        assert fake.store[BLK]["notes"].startswith("blocker prose")
+        assert "**Gates:**" in fake.store[BLK]["notes"]
+
+    @patch("things_mcp.writes.run_applescript")
+    @patch("things_mcp.writes.things.get")
+    def test_idempotent_second_call_writes_nothing(self, mock_get, mock_run):
+        fake = FakeThings()
+        fake.add(BLK, title="Blocker", tags=["work"])
+        fake.add(DEP, title="Dependent", tags=["home"])
+        mock_get.side_effect = fake.get
+        mock_run.side_effect = fake.run_applescript
+
+        writes.link_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+        dep_notes = fake.store[DEP]["notes"]
+        blk_notes = fake.store[BLK]["notes"]
+        writes_after_first = len(fake.write_calls())
+
+        result = writes.link_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+
+        assert isinstance(result, SuccessResponse)
+        # The idempotent second call performs no further writes...
+        assert len(fake.write_calls()) == writes_after_first
+        # ...and leaves both notes byte-identical and the tag un-duplicated.
+        assert fake.store[DEP]["notes"] == dep_notes
+        assert fake.store[BLK]["notes"] == blk_notes
+        assert fake.store[DEP]["tags"] == ["home", "gated"]
+
+    @patch("things_mcp.writes.run_applescript")
+    @patch("things_mcp.writes.things.get")
+    def test_many_to_many_dependent_gated_by_two_blockers(self, mock_get, mock_run):
+        fake = FakeThings()
+        fake.add(BLK, title="Blocker One")
+        fake.add(BLK2, title="Blocker Two")
+        fake.add(DEP, title="Dependent")
+        mock_get.side_effect = fake.get
+        mock_run.side_effect = fake.run_applescript
+
+        writes.link_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+        writes.link_blocker(blocker_uuid=BLK2, dependent_uuid=DEP)
+
+        notes = fake.store[DEP]["notes"]
+        # One managed block holding both blockers.
+        assert notes.count("**Gated by:**") == 1
+        assert f"things:///show?id={BLK}" in notes
+        assert f"things:///show?id={BLK2}" in notes
+        # `gated` applied once, not duplicated.
+        assert fake.store[DEP]["tags"] == ["gated"]
+
+    @patch("things_mcp.writes.run_applescript")
+    @patch("things_mcp.writes.things.get")
+    def test_many_to_many_blocker_gates_two_dependents(self, mock_get, mock_run):
+        fake = FakeThings()
+        fake.add(BLK, title="Blocker")
+        fake.add(DEP, title="Dependent One")
+        fake.add(DEP2, title="Dependent Two")
+        mock_get.side_effect = fake.get
+        mock_run.side_effect = fake.run_applescript
+
+        writes.link_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+        writes.link_blocker(blocker_uuid=BLK, dependent_uuid=DEP2)
+
+        notes = fake.store[BLK]["notes"]
+        assert notes.count("**Gates:**") == 1
+        assert f"things:///show?id={DEP}" in notes
+        assert f"things:///show?id={DEP2}" in notes
+        assert fake.store[DEP]["tags"] == ["gated"]
+        assert fake.store[DEP2]["tags"] == ["gated"]
+
+    @patch("things_mcp.writes.run_applescript")
+    @patch("things_mcp.writes.things.get")
+    def test_partial_link_when_blocker_side_fails(self, mock_get, mock_run):
+        fake = FakeThings()
+        fake.add(BLK, title="Blocker")
+        fake.add(DEP, title="Dependent", tags=["home"])
+        fake.fail_notes.add(BLK)  # blocker-side notes write raises
+        mock_get.side_effect = fake.get
+        mock_run.side_effect = fake.run_applescript
+
+        result = writes.link_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+
+        assert isinstance(result, ErrorResponse)
+        assert result.error == "PARTIAL_LINK"
+        # Dependent side IS wired -- the safe partial (task is marked blocked).
+        assert "gated" in fake.store[DEP]["tags"]
+        assert f"things:///show?id={BLK}" in fake.store[DEP]["notes"]
+        # Blocker side never landed.
+        assert not fake.store[BLK]["notes"]
+
+    @patch("things_mcp.writes.run_applescript")
+    @patch("things_mcp.writes.things.get")
+    def test_blocker_not_found(self, mock_get, mock_run):
+        fake = FakeThings()
+        fake.add(DEP, title="Dependent")
+        mock_get.side_effect = fake.get
+        mock_run.side_effect = fake.run_applescript
+
+        result = writes.link_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+        assert isinstance(result, ErrorResponse)
+        assert result.error == "NOT_FOUND"
+
+    def test_self_link_rejected(self):
+        result = writes.link_blocker(blocker_uuid=BLK, dependent_uuid=BLK)
+        assert isinstance(result, ErrorResponse)
+        assert result.error == "INVALID_INPUT"
+
+    def test_invalid_uuid(self):
+        with pytest.raises(ValueError, match="Invalid UUID"):
+            writes.link_blocker(blocker_uuid="bad", dependent_uuid=DEP)

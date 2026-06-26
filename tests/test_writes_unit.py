@@ -10,7 +10,21 @@ from datetime import date
 
 import pytest
 
-from things_mcp.writes import _applescript_date_block, _validate_uuid
+from things_mcp.writes import (
+    _REL_GATED_BY,
+    _applescript_date_block,
+    _has_uuid,
+    _merge_tag,
+    _parse_relation_block,
+    _relation_present,
+    _render_relation_block,
+    _splice_notes,
+    _validate_uuid,
+)
+
+UUID_A = "A" * 22
+UUID_B = "B" * 22
+UUID_C = "C" * 22
 
 
 class TestValidateUuid:
@@ -123,3 +137,145 @@ class TestApplescriptDateBlock:
         assert lines.index("set month of d to 6") < (
             len(lines) - 1 - lines[::-1].index("set day of d to 1")
         )
+
+
+def _link(title: str, uuid: str) -> str:
+    """Render one managed entry line the way writes.py does."""
+    return f"[{title}](things:///show?id={uuid})"
+
+
+class TestMergeTag:
+    """_merge_tag: add a tag without clobbering existing ones."""
+
+    def test_adds_to_empty(self):
+        assert _merge_tag([], "gated") == ["gated"]
+
+    def test_preserves_existing(self):
+        assert _merge_tag(["work", "home"], "gated") == ["work", "home", "gated"]
+
+    def test_idempotent_when_present(self):
+        assert _merge_tag(["work", "gated"], "gated") == ["work", "gated"]
+
+    def test_does_not_mutate_input(self):
+        original = ["work"]
+        _merge_tag(original, "gated")
+        assert original == ["work"]
+
+
+class TestRenderRelationBlock:
+    """_render_relation_block: label + one named link per entry."""
+
+    def test_empty_entries_render_nothing(self):
+        assert _render_relation_block(_REL_GATED_BY, []) == ""
+
+    def test_single_entry(self):
+        block = _render_relation_block(_REL_GATED_BY, [("Do first", UUID_A)])
+        assert block == f"{_REL_GATED_BY}\n{_link('Do first', UUID_A)}"
+
+    def test_multiple_entries_one_per_line(self):
+        block = _render_relation_block(
+            _REL_GATED_BY, [("A", UUID_A), ("B", UUID_B)]
+        )
+        lines = block.split("\n")
+        assert lines[0] == _REL_GATED_BY
+        assert lines[1] == _link("A", UUID_A)
+        assert lines[2] == _link("B", UUID_B)
+
+
+class TestParseRelationBlock:
+    """_parse_relation_block: locate label, consume contiguous link lines."""
+
+    def test_absent_label_returns_notes_unchanged(self):
+        text, entries = _parse_relation_block("just user notes", _REL_GATED_BY)
+        assert text == "just user notes"
+        assert entries == []
+
+    def test_none_notes(self):
+        text, entries = _parse_relation_block(None, _REL_GATED_BY)
+        assert text == ""
+        assert entries == []
+
+    def test_extracts_entries_and_strips_block(self):
+        notes = (
+            f"user text\n\n{_REL_GATED_BY}\n"
+            f"{_link('First', UUID_A)}\n{_link('Second', UUID_B)}"
+        )
+        text, entries = _parse_relation_block(notes, _REL_GATED_BY)
+        assert text == "user text"
+        assert entries == [("First", UUID_A), ("Second", UUID_B)]
+
+    def test_title_with_brackets_and_parens(self):
+        # Greedy title group must backtrack to the final things:// anchor.
+        title = "Fix [URGENT] thing (re: prod)"
+        notes = f"{_REL_GATED_BY}\n{_link(title, UUID_A)}"
+        _text, entries = _parse_relation_block(notes, _REL_GATED_BY)
+        assert entries == [(title, UUID_A)]
+
+    def test_block_stops_at_non_entry_line(self):
+        notes = (
+            f"{_REL_GATED_BY}\n{_link('A', UUID_A)}\n"
+            "trailing user prose that is not a link"
+        )
+        text, entries = _parse_relation_block(notes, _REL_GATED_BY)
+        assert entries == [("A", UUID_A)]
+        assert "trailing user prose" in text
+
+    def test_only_targets_its_own_label(self):
+        # A Gates block must be invisible to a Gated by parse and vice versa.
+        from things_mcp.writes import _REL_GATES
+
+        notes = (
+            f"{_REL_GATES}\n{_link('Dep', UUID_C)}\n\n"
+            f"{_REL_GATED_BY}\n{_link('Blk', UUID_A)}"
+        )
+        _text, gated_by = _parse_relation_block(notes, _REL_GATED_BY)
+        assert gated_by == [("Blk", UUID_A)]
+
+
+class TestSpliceNotes:
+    """_splice_notes: re-attach a block to user text, normalized to the end."""
+
+    def test_empty_block_returns_trimmed_text(self):
+        assert _splice_notes("user text\n\n", "") == "user text"
+
+    def test_appends_with_blank_separator(self):
+        block = _render_relation_block(_REL_GATED_BY, [("A", UUID_A)])
+        assert _splice_notes("user text", block) == f"user text\n\n{block}"
+
+    def test_block_only_when_no_user_text(self):
+        block = _render_relation_block(_REL_GATED_BY, [("A", UUID_A)])
+        assert _splice_notes("", block) == block
+
+    def test_parse_then_splice_is_idempotent(self):
+        # The core idempotency guarantee: rendering a parsed-out block back on
+        # produces byte-identical notes on every subsequent pass.
+        notes = (
+            f"user text\n\n{_REL_GATED_BY}\n"
+            f"{_link('A', UUID_A)}\n{_link('B', UUID_B)}"
+        )
+        text, entries = _parse_relation_block(notes, _REL_GATED_BY)
+        rebuilt = _splice_notes(text, _render_relation_block(_REL_GATED_BY, entries))
+        assert rebuilt == notes
+        # And a second round-trip is stable too.
+        text2, entries2 = _parse_relation_block(rebuilt, _REL_GATED_BY)
+        rebuilt2 = _splice_notes(
+            text2, _render_relation_block(_REL_GATED_BY, entries2)
+        )
+        assert rebuilt2 == notes
+
+
+class TestRelationPresent:
+    """_has_uuid / _relation_present: membership by uuid."""
+
+    def test_has_uuid(self):
+        entries = [("A", UUID_A), ("B", UUID_B)]
+        assert _has_uuid(entries, UUID_A)
+        assert not _has_uuid(entries, UUID_C)
+
+    def test_relation_present(self):
+        notes = f"{_REL_GATED_BY}\n{_link('A', UUID_A)}"
+        assert _relation_present(notes, _REL_GATED_BY, UUID_A)
+        assert not _relation_present(notes, _REL_GATED_BY, UUID_B)
+
+    def test_relation_present_on_none_notes(self):
+        assert not _relation_present(None, _REL_GATED_BY, UUID_A)

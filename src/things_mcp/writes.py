@@ -184,6 +184,171 @@ def _verify_url_scheme_write(uuid: str, *, delay: float = 0.5) -> dict | None:
     return things.get(uuid)
 
 
+# ---------------------------------------------------------------------------
+# Blocker-relation helpers (gated / gates)
+#
+# Things has no native task-to-task relation. We synthesize "B blocks D" with a
+# tag + bidirectional deep links in notes:
+#   - the dependent D gets the `gated` tag and a `**Gated by:**` block listing
+#     each blocker as a named link `[title](things:///show?id=uuid)`
+#   - the blocker B gets a reciprocal `**Gates:**` block listing each dependent
+#
+# Two correctness traps drive the read->splice->write-back design:
+#   - `set tag names` REPLACES the whole tag set, so adding `gated` must merge
+#     into the existing tags (never set just {"gated"}).
+#   - `set notes` REPLACES the whole notes body, so updating a managed block
+#     must parse the current notes, splice, and write the whole string back.
+# Both operations are kept idempotent by keying entries on uuid.
+# ---------------------------------------------------------------------------
+
+_GATED_TAG = "gated"
+
+# The bold labels ARE the section structure: Things' notes render a tiny
+# Markdown subset (bold/italic/strikethrough/named links) -- no headings, no
+# horizontal rules -- so these labels are how a managed block is located.
+_REL_GATED_BY = "**Gated by:**"
+_REL_GATES = "**Gates:**"
+
+# One managed entry: a named link to a Things item. The greedy title group
+# backtracks to the final `](things:///show?id=` so a title containing brackets
+# or parens still parses; the base62 uuid class bounds the id.
+_REL_ENTRY_RE = re.compile(
+    r"^\[(?P<title>.*)\]\(things:///show\?id=(?P<uuid>[A-Za-z0-9]{21,22})\)$"
+)
+
+
+def _set_notes(uuid: str, notes: str) -> None:
+    """Set an item's notes via AppleScript (REPLACES the whole body).
+
+    The value is passed via argv, never embedded in the script source.
+    """
+    script = f'''
+on run argv
+    set theNotes to item 1 of argv
+    tell application "Things3"
+        set theToDo to to do id "{uuid}"
+        set notes of theToDo to theNotes
+    end tell
+end run
+'''
+    run_applescript(script, notes)
+
+
+def _set_tag_names(uuid: str, tags: list[str]) -> None:
+    """Set an item's full tag list via AppleScript (REPLACES all tags).
+
+    Things' `set tag names` takes a comma-separated string and replaces the
+    item's entire tag set, so callers must pass the already-merged list. An
+    empty list clears all tags (`set tag names to ""`).
+    """
+    script = f'''
+on run argv
+    set theTags to item 1 of argv
+    tell application "Things3"
+        set theToDo to to do id "{uuid}"
+        set tag names of theToDo to theTags
+    end tell
+end run
+'''
+    run_applescript(script, ", ".join(tags))
+
+
+def _merge_tag(existing: list[str], tag: str) -> list[str]:
+    """Return existing tags plus `tag`, order-preserving and deduped."""
+    if tag in existing:
+        return list(existing)
+    return [*existing, tag]
+
+
+def _render_relation_block(label: str, entries: list[tuple[str, str]]) -> str:
+    """Render a managed relation block as `label` + one named link per entry.
+
+    `entries` is a list of (title, uuid). Returns "" when there are no entries
+    (the caller drops the block entirely rather than leaving an empty label).
+    """
+    if not entries:
+        return ""
+    lines = [label]
+    lines.extend(f"[{title}](things:///show?id={uuid})" for title, uuid in entries)
+    return "\n".join(lines)
+
+
+def _parse_relation_block(
+    notes: str | None, label: str
+) -> tuple[str, list[tuple[str, str]]]:
+    """Split notes into (text_without_block, entries) for the given `label`.
+
+    Locates the `label` line, consumes the contiguous following lines that are
+    managed entries, and returns the notes with that block (and the single
+    blank separator line preceding it, if any) removed, plus the parsed entries
+    as (title, uuid) pairs in document order. If the label is absent, returns
+    (notes, []). Inverse of _render_relation_block + _splice_notes.
+    """
+    if not notes:
+        return "", []
+    lines = notes.split("\n")
+    out: list[str] = []
+    entries: list[tuple[str, str]] = []
+    i = 0
+    n = len(lines)
+    found = False
+    while i < n:
+        if not found and lines[i].strip() == label:
+            found = True
+            # Drop the one blank separator line we own above the block.
+            if out and out[-1].strip() == "":
+                out.pop()
+            i += 1
+            while i < n:
+                m = _REL_ENTRY_RE.match(lines[i].strip())
+                if m is None:
+                    break
+                entries.append((m.group("title"), m.group("uuid")))
+                i += 1
+            continue
+        out.append(lines[i])
+        i += 1
+    return "\n".join(out), entries
+
+
+def _splice_notes(text: str, block: str) -> str:
+    """Append a managed `block` to user `text`, normalized to the end.
+
+    One blank line separates user text from the block. An empty block returns
+    the user text alone (with trailing whitespace stripped). Idempotent given a
+    `text` already stripped of the block (as _parse_relation_block returns).
+    """
+    text = (text or "").rstrip()
+    if not block:
+        return text
+    if text:
+        return f"{text}\n\n{block}"
+    return block
+
+
+def _has_uuid(entries: list[tuple[str, str]], uuid: str) -> bool:
+    """True if any (title, uuid) entry matches `uuid`."""
+    return any(u == uuid for _, u in entries)
+
+
+def _relation_present(notes: str | None, label: str, uuid: str) -> bool:
+    """True if the managed block for `label` references `uuid`."""
+    _, entries = _parse_relation_block(notes, label)
+    return _has_uuid(entries, uuid)
+
+
+def _partial_link_message(
+    blocker_uuid: str, dependent_uuid: str, exc: Exception | None = None
+) -> str:
+    """Error text for a half-wired link (dependent side done, blocker side not)."""
+    detail = f": {exc}" if exc is not None else ""
+    return (
+        f"Dependent {dependent_uuid} is wired (gated tag + 'Gated by' link), but "
+        f"the blocker side ({blocker_uuid} 'Gates' link) did not land{detail}. "
+        "Re-run link_blocker to complete -- it is idempotent."
+    )
+
+
 def schedule_item(
     *,
     uuid: str,
@@ -968,4 +1133,112 @@ end tell
         message="Item moved to Trash.",
         action="trashed",
         temporal_state=None,
+    )
+
+
+def link_blocker(
+    *,
+    blocker_uuid: str,
+    dependent_uuid: str,
+) -> SuccessResponse | ErrorResponse:
+    """Wire a 'blocked by' relation: blocker_uuid blocks dependent_uuid.
+
+    Atomically, on success:
+      1. Merge the `gated` tag into the dependent's existing tags.
+      2. Ensure the dependent's `**Gated by:**` block links to the blocker.
+      3. Ensure the blocker's `**Gates:**` block links to the dependent.
+
+    Idempotent (a second identical call writes nothing) and many-to-many (a
+    dependent may be gated by several blockers; a blocker's `**Gates:**` grows).
+    The dependent side is wired and verified first, then the blocker side: if
+    the blocker side fails, the dependent is left correctly marked blocked and a
+    PARTIAL_LINK error is returned (re-running completes it).
+    """
+    _validate_uuid(blocker_uuid)
+    _validate_uuid(dependent_uuid)
+    if blocker_uuid == dependent_uuid:
+        return ErrorResponse(
+            error="INVALID_INPUT",
+            message="A task cannot block itself.",
+        )
+
+    blocker = things.get(blocker_uuid)
+    if blocker is None:
+        return ErrorResponse(
+            error="NOT_FOUND", message=f"Blocker {blocker_uuid} not found."
+        )
+    dependent = things.get(dependent_uuid)
+    if dependent is None:
+        return ErrorResponse(
+            error="NOT_FOUND", message=f"Dependent {dependent_uuid} not found."
+        )
+
+    blocker_title = blocker.get("title") or ""
+    dependent_title = dependent.get("title") or ""
+
+    # ---- Side 1: dependent gets `gated` + a 'Gated by' link to the blocker ----
+    dep_tags = dependent.get("tags") or []
+    merged_tags = _merge_tag(dep_tags, _GATED_TAG)
+    if merged_tags != dep_tags:
+        _set_tag_names(dependent_uuid, merged_tags)
+
+    dep_notes = dependent.get("notes") or ""
+    dep_text, dep_entries = _parse_relation_block(dep_notes, _REL_GATED_BY)
+    if not _has_uuid(dep_entries, blocker_uuid):
+        dep_entries.append((blocker_title, blocker_uuid))
+        new_dep_notes = _splice_notes(
+            dep_text, _render_relation_block(_REL_GATED_BY, dep_entries)
+        )
+        if new_dep_notes != dep_notes:
+            _set_notes(dependent_uuid, new_dep_notes)
+
+    # Verify side 1 (CLAUDE.md rule 8) before touching the blocker side.
+    dep_after = things.get(dependent_uuid)
+    if (
+        dep_after is None
+        or _GATED_TAG not in (dep_after.get("tags") or [])
+        or not _relation_present(dep_after.get("notes"), _REL_GATED_BY, blocker_uuid)
+    ):
+        return ErrorResponse(
+            error="VERIFY_FAILED",
+            message=(
+                f"Failed to wire the dependent side of "
+                f"{blocker_uuid} -> {dependent_uuid}."
+            ),
+        )
+
+    # ---- Side 2: blocker gets a 'Gates' link to the dependent ----
+    blk_notes = blocker.get("notes") or ""
+    blk_text, blk_entries = _parse_relation_block(blk_notes, _REL_GATES)
+    try:
+        if not _has_uuid(blk_entries, dependent_uuid):
+            blk_entries.append((dependent_title, dependent_uuid))
+            new_blk_notes = _splice_notes(
+                blk_text, _render_relation_block(_REL_GATES, blk_entries)
+            )
+            if new_blk_notes != blk_notes:
+                _set_notes(blocker_uuid, new_blk_notes)
+    except RuntimeError as exc:
+        return ErrorResponse(
+            error="PARTIAL_LINK",
+            message=_partial_link_message(blocker_uuid, dependent_uuid, exc),
+        )
+
+    # Verify side 2 (CLAUDE.md rule 8).
+    blk_after = things.get(blocker_uuid)
+    if blk_after is None or not _relation_present(
+        blk_after.get("notes"), _REL_GATES, dependent_uuid
+    ):
+        return ErrorResponse(
+            error="PARTIAL_LINK",
+            message=_partial_link_message(blocker_uuid, dependent_uuid),
+        )
+
+    return SuccessResponse(
+        uuid=dependent_uuid,
+        message=(
+            f"Linked: {dependent_title!r} is gated by {blocker_title!r}."
+        ),
+        action="linked_blocker",
+        temporal_state=_read_temporal_state(dependent_uuid),
     )

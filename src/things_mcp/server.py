@@ -309,7 +309,7 @@ async def get_areas(include_items: bool = False) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Write Tools (6)
+# Write Tools (9)
 # ---------------------------------------------------------------------------
 
 
@@ -541,6 +541,36 @@ async def delete_item(uuid: str) -> dict:
     """
     try:
         result = writes.delete_item(uuid=uuid)
+        return result.model_dump()
+    except sqlite3.OperationalError:
+        return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
+    except Exception as e:
+        return ErrorResponse(error="WRITE_ERROR", message=str(e)).model_dump()
+
+
+@mcp.tool()
+async def link_blocker(blocker_uuid: str, dependent_uuid: str) -> dict:
+    """Wire a 'blocked by' dependency: blocker_uuid blocks dependent_uuid.
+
+    Things has no native task-to-task relation; this synthesizes one. The
+    dependent gets the ``gated`` tag plus a ``**Gated by:**`` link to the
+    blocker in its notes, and the blocker gets a reciprocal ``**Gates:**`` link
+    to the dependent. Tags and notes are MERGED, never replaced -- existing tags
+    and user-authored notes are preserved. Idempotent (calling twice changes
+    nothing) and many-to-many (a dependent may be gated by several blockers).
+
+    Both sides are verified after writing. If only the dependent side lands, the
+    result is a PARTIAL_LINK error -- re-run to complete (it is idempotent).
+    Never hand-assemble these links in notes; always go through this verb.
+
+    Args:
+        blocker_uuid: The task that must finish first (the blocker).
+        dependent_uuid: The blocked task -- it receives the ``gated`` tag.
+    """
+    try:
+        result = writes.link_blocker(
+            blocker_uuid=blocker_uuid, dependent_uuid=dependent_uuid
+        )
         return result.model_dump()
     except sqlite3.OperationalError:
         return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
