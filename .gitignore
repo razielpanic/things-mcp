@@ -10,6 +10,10 @@ build/
 
 # Virtual environments
 .venv/
+# FDA-granted venv that runs the MCP under Claude Desktop (see docs/FDA-SETUP).
+# NOTE: .gitignore has no trailing-comment syntax -- a comment must be on its
+# own line, never after the pattern, or it becomes part of the pattern.
+.venv-fda/
 venv/
 env/
 
