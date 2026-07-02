@@ -938,6 +938,11 @@ def update_item(
             error="INVALID_INPUT",
             message="Provide project_uuid or area_uuid, not both.",
         )
+    if completed is True and canceled is True:
+        return ErrorResponse(
+            error="INVALID_INPUT",
+            message="Provide completed=true or canceled=true, not both.",
+        )
     if project_uuid is not None:
         _validate_uuid(project_uuid)
     if area_uuid is not None:
@@ -988,10 +993,17 @@ def update_item(
         script_lines.append(f"set tag names of theToDo to item {argv_index} of argv")
         argv_index += 1
 
-    if completed is True:
+    # things-mcp#6 guard: Things' AppleScript treats `set status` as a toggle
+    # when the item is already in that state — `set status to completed` on a
+    # completed task un-logbooks it back to open. Make the request idempotent:
+    # only emit the status write when it would actually change the status.
+    apply_completed = completed is True and pre_status != "completed"
+    apply_canceled = canceled is True and pre_status != "canceled"
+
+    if apply_completed:
         script_lines.append("set status of theToDo to completed")
 
-    if canceled is True:
+    if apply_canceled:
         script_lines.append("set status of theToDo to canceled")
 
     # Handle deadline: date string sets it, empty string clears it
@@ -1065,9 +1077,17 @@ end tell
     if tags is not None:
         parts.append("tags")
     if completed is True:
-        parts.append("completed")
+        parts.append(
+            "completed"
+            if apply_completed
+            else "completed (no-op — item was already completed)"
+        )
     if canceled is True:
-        parts.append("canceled")
+        parts.append(
+            "canceled"
+            if apply_canceled
+            else "canceled (no-op — item was already canceled)"
+        )
     if project_uuid is not None:
         parts.append("project")
     if area_uuid is not None:
@@ -1076,12 +1096,32 @@ end tell
     # Guard: a routine update (notes/title/tags/deadline/reschedule/move) must
     # never silently complete or cancel an open item. If it did, reopen and
     # report rather than logbooking an active task.
+    post_status = raw.get("status") if isinstance(raw, dict) else None
     if completed is not True and canceled is not True:
-        guard = _reopen_if_unexpectedly_closed(
-            uuid, pre_status, raw.get("status") if isinstance(raw, dict) else None
-        )
+        guard = _reopen_if_unexpectedly_closed(uuid, pre_status, post_status)
         if guard is not None:
             return guard
+
+    # things-mcp#6: an explicit status request must be reflected by the store,
+    # not assumed. Report a mismatch instead of an optimistic success.
+    if completed is True and post_status != "completed":
+        return ErrorResponse(
+            error="STATUS_MISMATCH",
+            message=(
+                f"Requested completed=true but the item's status is "
+                f"{post_status!r} after the write. Re-check the item in Things; "
+                "other requested field changes may have applied."
+            ),
+        )
+    if canceled is True and post_status != "canceled":
+        return ErrorResponse(
+            error="STATUS_MISMATCH",
+            message=(
+                f"Requested canceled=true but the item's status is "
+                f"{post_status!r} after the write. Re-check the item in Things; "
+                "other requested field changes may have applied."
+            ),
+        )
 
     return SuccessResponse(
         uuid=uuid,

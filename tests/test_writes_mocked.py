@@ -921,3 +921,93 @@ class TestReconcileCompletion:
     def test_invalid_uuid(self):
         with pytest.raises(ValueError, match="Invalid UUID"):
             writes.reconcile_completion(uuid="bad")
+
+
+class TestUpdateItemStatusIdempotence:
+    """things-mcp#6: completed/canceled must be idempotent sets, not toggles.
+
+    Things' AppleScript toggles `set status` when the item is already in that
+    state — completing an already-completed task un-logbooked it back to open,
+    while the response optimistically reported success.
+    """
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_completed_on_already_completed_is_noop(self, mock_run, mock_get):
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.return_value = _raw_task(status="completed")
+
+        result = writes.update_item(uuid=VALID_UUID, completed=True)
+
+        # No status write may be emitted for an already-completed item.
+        scripts = [
+            (c.kwargs.get("input") or (c.args[0] if c.args else ""))
+            for c in mock_run.call_args_list
+        ]
+        assert "set status" not in "\n".join(str(s) for s in scripts)
+
+        assert isinstance(result, SuccessResponse)
+        assert "no-op" in result.message
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_canceled_on_already_canceled_is_noop(self, mock_run, mock_get):
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.return_value = _raw_task(status="canceled")
+
+        result = writes.update_item(uuid=VALID_UUID, canceled=True)
+
+        scripts = [
+            (c.kwargs.get("input") or (c.args[0] if c.args else ""))
+            for c in mock_run.call_args_list
+        ]
+        assert "set status" not in "\n".join(str(s) for s in scripts)
+
+        assert isinstance(result, SuccessResponse)
+        assert "no-op" in result.message
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_completed_on_open_item_emits_status_write(self, mock_run, mock_get):
+        mock_run.return_value = _mock_subprocess_ok()
+        # pre-read: incomplete; verify read + temporal-state read: completed
+        mock_get.side_effect = [
+            _raw_task(status="incomplete"),
+            _raw_task(status="completed"),
+            _raw_task(status="completed"),
+        ]
+
+        result = writes.update_item(uuid=VALID_UUID, completed=True)
+
+        scripts = [
+            (c.kwargs.get("input") or (c.args[0] if c.args else ""))
+            for c in mock_run.call_args_list
+        ]
+        assert "set status of theToDo to completed" in "\n".join(
+            str(s) for s in scripts
+        )
+        assert isinstance(result, SuccessResponse)
+        assert "no-op" not in result.message
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_status_mismatch_reported_not_assumed(self, mock_run, mock_get):
+        mock_run.return_value = _mock_subprocess_ok()
+        # The write "succeeds" but the store never reflects completed.
+        mock_get.side_effect = [
+            _raw_task(status="incomplete"),
+            _raw_task(status="incomplete"),
+            _raw_task(status="incomplete"),
+        ]
+
+        result = writes.update_item(uuid=VALID_UUID, completed=True)
+
+        assert isinstance(result, ErrorResponse)
+        assert result.error == "STATUS_MISMATCH"
+
+    def test_completed_and_canceled_together_rejected(self):
+        result = writes.update_item(
+            uuid=VALID_UUID, completed=True, canceled=True
+        )
+        assert isinstance(result, ErrorResponse)
+        assert result.error == "INVALID_INPUT"
