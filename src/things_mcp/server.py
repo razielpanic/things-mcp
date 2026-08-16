@@ -323,7 +323,6 @@ async def create_todo(
     project_uuid: Optional[str] = None,
     area_uuid: Optional[str] = None,
     heading: Optional[str] = None,
-    checklist_items: Optional[list[str]] = None,
 ) -> dict:
     """Create a new to-do in Things 3.
 
@@ -349,12 +348,15 @@ async def create_todo(
         area_uuid: UUID of parent area (structural context, ignored if
             project_uuid is set).
         heading: Heading title within the project to place under.
-        checklist_items: List of checklist item titles. Uses URL scheme
-            when present (only way to create checklists).
     """
+    # checklist_items is deliberately NOT exposed here although writes.create_todo
+    # supports it: checklists require the things:/// URL scheme, which foregrounds
+    # Things and steals keyboard focus mid-keystroke (bit RP 2026-08-16). Steps
+    # belong as numbered lines in notes. The quiet AppleScript path is the only
+    # one this tool offers; checklist creation stays available to code that
+    # calls writes.create_todo directly, on purpose.
     try:
         tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
-        cl_list = [c.strip() for c in checklist_items if c.strip()] if checklist_items else None
         result = writes.create_todo(
             title=title,
             notes=notes,
@@ -364,7 +366,6 @@ async def create_todo(
             project_uuid=project_uuid,
             area_uuid=area_uuid,
             heading=heading,
-            checklist_items=cl_list,
         )
         return result.model_dump()
     except sqlite3.OperationalError:
