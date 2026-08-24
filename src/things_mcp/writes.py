@@ -189,6 +189,40 @@ def _log_status_anomaly(
         pass
 
 
+def census_path() -> Path:
+    """Companion counter to the anomaly log: how many guarded writes have run.
+
+    An empty anomaly log is not evidence on its own -- it reads the same whether
+    the fault is gone or the tool simply went unused. Without a denominator there
+    is no condition under which an open "does this still happen?" question can
+    ever be closed, so it stays open forever and clutters the tracker.
+
+    Overridable via THINGS_MCP_WRITE_CENSUS for the same reason as the log.
+    """
+    override = os.environ.get("THINGS_MCP_WRITE_CENSUS")
+    return Path(override) if override else (Path.home() / ".things-mcp" / "write-census.json")
+
+
+def _record_guarded_write(source: str) -> None:
+    """Count one write that passed through the close check. Best-effort."""
+    try:
+        p = census_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+        now = datetime.now().astimezone().isoformat()
+        data["writes"] = int(data.get("writes", 0)) + 1
+        data.setdefault("first", now)
+        data["last"] = now
+        by = data.setdefault("by_source", {})
+        by[source] = int(by.get(source, 0)) + 1
+        p.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def _check_unexpected_close(
     uuid: str, pre_status: str | None, post_status: str | None, source: str = "write"
 ) -> ErrorResponse | None:
@@ -220,6 +254,7 @@ def _check_unexpected_close(
         "completed",
         "canceled",
     ):
+        _record_guarded_write(source)
         _log_status_anomaly(uuid, pre_status, post_status, source)
         return ErrorResponse(
             error="UNEXPECTED_STATUS_CHANGE",
@@ -231,6 +266,7 @@ def _check_unexpected_close(
                 f"from this call are not guaranteed. Logged to {anomaly_log_path()}."
             ),
         )
+    _record_guarded_write(source)
     return None
 
 

@@ -60,3 +60,4 @@ def _isolate_anomaly_log(tmp_path, monkeypatch):
     writing fake UUIDs into it destroys exactly what it is for.
     """
     monkeypatch.setenv("THINGS_MCP_ANOMALY_LOG", str(tmp_path / "anomalies.jsonl"))
+    monkeypatch.setenv("THINGS_MCP_WRITE_CENSUS", str(tmp_path / "census.json"))
