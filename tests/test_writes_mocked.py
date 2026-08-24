@@ -471,12 +471,18 @@ class TestUpdateItemProjectMove:
 
 
 class TestSilentCompletionGuard:
-    """A non-completing write must never silently complete/cancel an open item."""
+    """A non-completing write reports an unexpected close -- and never "repairs" it.
 
+    The check cannot distinguish a tool-caused close from a checkbox click in the
+    Things UI mid-write, so auto-reopening un-completes tasks that were finished
+    deliberately. Report only.
+    """
+
+    @patch("things_mcp.writes._log_status_anomaly")
     @patch("things_mcp.writes.things.get")
     @patch("things_mcp.writes.subprocess.run")
-    def test_update_reopens_and_errors_on_unexpected_completion(
-        self, mock_run, mock_get
+    def test_update_errors_but_does_not_touch_the_item(
+        self, mock_run, mock_get, mock_log
     ):
         mock_run.return_value = _mock_subprocess_ok()
         # pre-read: incomplete; post-write verify: unexpectedly completed
@@ -489,12 +495,16 @@ class TestSilentCompletionGuard:
 
         assert isinstance(result, ErrorResponse)
         assert result.error == "UNEXPECTED_STATUS_CHANGE"
-        # the guard issued a reopen AppleScript
+        assert "LEFT AS-IS" in result.message
+        # No repair attempt of any kind.
         scripts = [
             (c.kwargs.get("input") or (c.args[0] if c.args else ""))
             for c in mock_run.call_args_list
         ]
-        assert any("set status of" in s and "to open" in s for s in scripts)
+        assert not any("to open" in s for s in scripts)
+        # The transition is recorded so a future occurrence is decidable.
+        mock_log.assert_called_once()
+        assert mock_log.call_args.args[1:3] == ("incomplete", "completed")
 
     @patch("things_mcp.writes.things.get")
     @patch("things_mcp.writes.subprocess.run")
@@ -517,11 +527,12 @@ class TestSilentCompletionGuard:
         ]
         assert not any("to open" in s for s in scripts)
 
+    @patch("things_mcp.writes._log_status_anomaly")
     @patch("things_mcp.writes.time.sleep")
     @patch("things_mcp.writes.things.get")
     @patch("things_mcp.writes.subprocess.run")
-    def test_schedule_reopens_on_unexpected_completion(
-        self, mock_run, mock_get, mock_sleep
+    def test_schedule_errors_but_does_not_touch_the_item(
+        self, mock_run, mock_get, mock_sleep, mock_log
     ):
         mock_run.return_value = _mock_subprocess_ok()
         mock_get.side_effect = [
@@ -533,6 +544,38 @@ class TestSilentCompletionGuard:
 
         assert isinstance(result, ErrorResponse)
         assert result.error == "UNEXPECTED_STATUS_CHANGE"
+        scripts = [
+            (c.kwargs.get("input") or (c.args[0] if c.args else ""))
+            for c in mock_run.call_args_list
+        ]
+        assert not any("to open" in s for s in scripts)
+        mock_log.assert_called_once()
+        assert mock_log.call_args.kwargs.get("source") or mock_log.call_args.args[3] == "schedule_item"
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_user_cancel_mid_write_is_reported_not_reverted(self, mock_run, mock_get):
+        """An item comes back `canceled` after a schedule call.
+
+        schedule_item has no cancel path, so this can only originate outside the
+        tool -- in practice a cancel in the Things UI. It must be surfaced and
+        left alone, never reverted.
+        """
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.side_effect = [
+            _raw_task(status="incomplete"),
+            _raw_task(status="canceled"),
+        ]
+
+        result = writes.update_item(uuid=VALID_UUID, notes="note only")
+
+        assert isinstance(result, ErrorResponse)
+        assert result.error == "UNEXPECTED_STATUS_CHANGE"
+        scripts = [
+            (c.kwargs.get("input") or (c.args[0] if c.args else ""))
+            for c in mock_run.call_args_list
+        ]
+        assert not any("to open" in s for s in scripts)
 
 
 class TestLinkBlocker:

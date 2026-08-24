@@ -50,3 +50,13 @@ def sample_raw_dict() -> dict:
 def valid_uuid() -> str:
     """Return a 22-char base62 test UUID."""
     return "A" * 22
+
+
+@pytest.fixture(autouse=True)
+def _isolate_anomaly_log(tmp_path, monkeypatch):
+    """Never let a test append to the real status-anomaly log.
+
+    That log is diagnostic evidence for unexplained status changes. A test run
+    writing fake UUIDs into it destroys exactly what it is for.
+    """
+    monkeypatch.setenv("THINGS_MCP_ANOMALY_LOG", str(tmp_path / "anomalies.jsonl"))

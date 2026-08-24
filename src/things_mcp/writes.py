@@ -17,11 +17,13 @@ Security:
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import time
 import urllib.parse
-from datetime import date
+from datetime import date, datetime
+from pathlib import Path
 from typing import Optional
 
 import things
@@ -141,34 +143,92 @@ def _read_temporal_state(uuid: str) -> TemporalState | None:
     )
 
 
-def _reopen_if_unexpectedly_closed(
-    uuid: str, pre_status: str | None, post_status: str | None
+_DEFAULT_ANOMALY_LOG = Path.home() / ".things-mcp" / "status-anomalies.jsonl"
+
+
+def anomaly_log_path() -> Path:
+    """Where status anomalies are recorded.
+
+    Resolved per call, not at import, and overridable via
+    THINGS_MCP_ANOMALY_LOG -- the test suite points it at a temp file. Without
+    that, running the tests appends fake UUIDs to the real diagnostic log and
+    quietly destroys the only evidence the log exists to collect.
+    """
+    override = os.environ.get("THINGS_MCP_ANOMALY_LOG")
+    return Path(override) if override else _DEFAULT_ANOMALY_LOG
+
+
+def _log_status_anomaly(
+    uuid: str, pre_status: str | None, post_status: str | None, source: str
+) -> None:
+    """Append one status anomaly to a durable JSONL log.
+
+    Exists because an unexplained status change cannot be diagnosed after the
+    fact: restoring the affected item overwrites its completed_date, and nothing
+    else records the transition. A dated pre/post pair per event makes the next
+    occurrence decidable instead of a suspicion. Best-effort -- a logging failure
+    must never break a write.
+    """
+    try:
+        log_path = anomaly_log_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(
+                json.dumps(
+                    {
+                        "ts": datetime.now().astimezone().isoformat(),
+                        "uuid": uuid,
+                        "source": source,
+                        "pre_status": pre_status,
+                        "post_status": post_status,
+                    }
+                )
+                + "\n"
+            )
+    except Exception:
+        pass
+
+
+def _check_unexpected_close(
+    uuid: str, pre_status: str | None, post_status: str | None, source: str = "write"
 ) -> ErrorResponse | None:
-    """Guard against silent completion: restore an item the write closed by accident.
+    """Report — do not repair — an item that closed during a non-closing write.
 
-    No write here (scheduling, notes, retitle, move, deadline) should ever flip an
-    open item to completed/canceled — only an explicit completed/canceled request
-    may. If a write does so anyway, reopen the item and return an error so the
-    caller learns of the anomaly instead of silently logbooking an active task.
+    No write here (scheduling, notes, retitle, move, deadline) requests a status
+    change, so seeing one means something else closed the item inside the write
+    window.
 
-    Returns an ErrorResponse describing the recovery, or None if status is fine.
+    This used to reopen the item automatically. That is wrong whenever the
+    Things UI is in use alongside the MCP: the check cannot distinguish a
+    deliberate checkbox click from a tool-caused change, so auto-reopening
+    silently un-completes tasks that were finished on purpose — a guard against
+    data loss that causes data loss.
+
+    So: leave the item exactly as found, record the transition, and tell the
+    caller. A wrongly-closed item that is visible beats a deliberately-closed
+    item silently reopened. Recovery is one click; an unnoticed reopen is a task
+    that quietly returns from the dead.
+
+    Attribution caution: a hit here does NOT establish that this tool closed the
+    item. `schedule_item` has no cancellation path at all, so a `canceled` result
+    cannot originate here. Treat every hit as unattributed until the anomaly log
+    and the item's own completed_date say otherwise.
+
+    Returns an ErrorResponse describing what was seen, or None if status is fine.
     """
     if post_status in ("completed", "canceled") and pre_status not in (
         "completed",
         "canceled",
     ):
-        try:
-            run_applescript(
-                f'tell application "Things3" to set status of (to do id "{uuid}") to open'
-            )
-        except RuntimeError:
-            pass
+        _log_status_anomaly(uuid, pre_status, post_status, source)
         return ErrorResponse(
             error="UNEXPECTED_STATUS_CHANGE",
             message=(
-                f"Write unexpectedly set status to {post_status!r} without a "
-                "completed/canceled request; the item was restored to open. "
-                "Re-check the item — no other field change is guaranteed."
+                f"Item status went {pre_status!r} -> {post_status!r} during a write "
+                "that did not request it. The item was LEFT AS-IS, not modified. "
+                "The most common cause is a concurrent edit in the Things UI. "
+                "Check the item and set it how you want it; other field changes "
+                f"from this call are not guaranteed. Logged to {anomaly_log_path()}."
             ),
         )
     return None
@@ -534,8 +594,11 @@ end tell
             message=f"Item {uuid} not found after scheduling.",
         )
 
-    guard = _reopen_if_unexpectedly_closed(
-        uuid, pre_status, raw.get("status") if isinstance(raw, dict) else None
+    guard = _check_unexpected_close(
+        uuid,
+        pre_status,
+        raw.get("status") if isinstance(raw, dict) else None,
+        source="schedule_item",
     )
     if guard is not None:
         return guard
@@ -1098,7 +1161,9 @@ end tell
     # report rather than logbooking an active task.
     post_status = raw.get("status") if isinstance(raw, dict) else None
     if completed is not True and canceled is not True:
-        guard = _reopen_if_unexpectedly_closed(uuid, pre_status, post_status)
+        guard = _check_unexpected_close(
+            uuid, pre_status, post_status, source="update_item"
+        )
         if guard is not None:
             return guard
 
