@@ -386,6 +386,11 @@ async def create_project(
 ) -> dict:
     """Create a new structural container (project) in Things 3.
 
+    FOREGROUNDS THINGS when ``todos`` is passed: initial to-dos ride the
+    things:/// URL scheme, which activates the Things window mid-keystroke
+    (things-mcp#7, inherent to the macOS URL handler). Warn the user before
+    calling with ``todos``; without ``todos`` the write is background AppleScript.
+
     Projects are completable containers on the structural axis. Never schedule
     a project to Today -- projects in Today cause sidebar duplication. Use
     "anytime" or a future date. Response includes temporal_state showing the
@@ -486,6 +491,10 @@ async def update_item(
 @mcp.tool()
 async def schedule_item(uuid: str, when: str) -> dict:
     """The core temporal operation: change which computed view an item appears in.
+
+    FOREGROUNDS THINGS when ``when="evening"``: the evening flag rides the
+    things:/// URL scheme, which activates the Things window (things-mcp#7).
+    Warn the user first. All other ``when`` values are background AppleScript.
 
     Maps ``when`` values to state transitions on start + start_date:
     - "today" -> sets start_date=today -> derived_list=Today
