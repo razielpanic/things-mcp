@@ -122,3 +122,91 @@ class TestPathResolution:
         import things.database
 
         assert evening.database_path() == things.database.DEFAULT_FILEPATH
+
+
+class TestNoCachedConnection:
+    """The three bugs a module-level cached connection bought.
+
+    All were found by adversarial review of the first version and reproduced
+    before the cache was removed. They are pinned here because the temptation
+    to re-add a cache ("it's just one connection") will recur, and each of
+    these fails silently in production.
+    """
+
+    def test_a_replaced_database_file_is_seen(self, tmp_path, monkeypatch):
+        """Things Cloud re-sync / restore replaces the file at the same path.
+
+        A cached connection keyed on the path kept reading the deleted inode
+        forever, while things.py -- which connects per query -- read the new
+        file. The item dict and its evening flag then came from different
+        databases.
+        """
+        import shutil
+
+        a = create_fixture.build(str(tmp_path / "a.sqlite"), quiet=True)
+        monkeypatch.setenv("THINGSDB", a)
+        assert evening.is_evening(EVENING_UUID) is True
+
+        b = create_fixture.build(str(tmp_path / "b.sqlite"), quiet=True)
+        con = sqlite3.connect(b)
+        con.execute(
+            "UPDATE TMTask SET startBucket=0 WHERE uuid=?", (EVENING_UUID,)
+        )
+        con.commit()
+        con.close()
+        shutil.move(b, a)  # same path, different inode
+
+        assert evening.is_evening(EVENING_UUID) is False
+
+    def test_reads_are_consistent_across_threads(self, db):
+        """sqlite3 defaults to check_same_thread=True.
+
+        A lock gives mutual exclusion but not cross-thread legality; the cached
+        version raised ProgrammingError in a second thread, swallowed it, never
+        reset, and returned None permanently -- indistinguishable from "column
+        missing".
+        """
+        import threading
+
+        results = {}
+
+        def read(key):
+            results[key] = evening.is_evening(EVENING_UUID)
+
+        read("main")
+        t = threading.Thread(target=read, args=("thread",))
+        t.start()
+        t.join()
+        read("main_again")
+
+        assert results == {"main": True, "thread": True, "main_again": True}
+
+    def test_failed_opens_do_not_leak_descriptors(self, tmp_path, monkeypatch):
+        """sqlite3.connect is lazy; the PRAGMA after it can raise with the fd open."""
+        import subprocess
+
+        monkeypatch.setenv("THINGSDB", str(tmp_path / "nope.sqlite"))
+
+        def open_fds():
+            out = subprocess.run(
+                ["bash", "-c", "ls /dev/fd | wc -l"], capture_output=True, text=True
+            )
+            return int(out.stdout.strip())
+
+        before = open_fds()
+        for _ in range(100):
+            assert evening.is_evening("abc") is None
+        assert open_fds() <= before + 5, "file descriptors leaked on failed opens"
+
+    def test_null_start_bucket_reads_as_unknown(self, tmp_path, monkeypatch):
+        """startBucket is nullable. NULL is an absent value, not a False."""
+        path = create_fixture.build(str(tmp_path / "n.sqlite"), quiet=True)
+        con = sqlite3.connect(path)
+        con.execute(
+            "UPDATE TMTask SET startBucket=NULL WHERE uuid=?", (EVENING_UUID,)
+        )
+        con.commit()
+        con.close()
+        monkeypatch.setenv("THINGSDB", path)
+
+        assert evening.is_evening(EVENING_UUID) is None

@@ -67,7 +67,12 @@ def create_schema(conn: sqlite3.Connection) -> None:
             -- the real Things schema has never used. The fixture agreed with
             -- reads.py's assumption instead of with Things, so tests passed
             -- over a field that was a constant False in every real call.
-            startBucket INTEGER NOT NULL DEFAULT 0,
+            -- Nullable, matching the real schema (notnull=0, no default).
+            -- Declaring it NOT NULL here would make the fixture unable to
+            -- represent a state the live database permits -- the same
+            -- fixture-disagrees-with-Things trap that let the `evening`
+            -- column exist here for months.
+            startBucket INTEGER DEFAULT 0,
             reminderTime INTEGER
         );
 

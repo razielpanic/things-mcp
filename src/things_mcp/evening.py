@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import os
 import sqlite3
-import threading
 
 import things.database
 
@@ -38,12 +37,6 @@ import things.database
 # repro items from things-mcp#9 and #23 -- both confirmed in This Evening by
 # screenshot at filing time -- are among them.
 _EVENING_BUCKET = 1
-
-_lock = threading.Lock()
-_conn: sqlite3.Connection | None = None
-_conn_path: str | None = None
-_has_column: bool | None = None
-
 
 def database_path() -> str:
     """The database things.py itself would read.
@@ -58,51 +51,11 @@ def database_path() -> str:
     )
 
 
-def _connect() -> sqlite3.Connection | None:
-    """Open (or reuse) a read-only connection to the current database path.
-
-    Reopens when the path changes, so a test that repoints THINGSDB is not
-    served from a connection to the previous database.
-    """
-    global _conn, _conn_path, _has_column
-
-    path = database_path()
-    if _conn is not None and _conn_path == path:
-        return _conn
-
-    if _conn is not None:
-        try:
-            _conn.close()
-        except Exception:
-            pass
-    _conn = None
-    _conn_path = None
-    _has_column = None
-
-    try:
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(TMTask)")}
-    except Exception:
-        return None
-
-    _conn = conn
-    _conn_path = path
-    _has_column = "startBucket" in columns
-    return _conn
-
-
 def reset_cache() -> None:
-    """Drop the cached connection. For tests that swap databases."""
-    global _conn, _conn_path, _has_column
-    with _lock:
-        if _conn is not None:
-            try:
-                _conn.close()
-            except Exception:
-                pass
-        _conn = None
-        _conn_path = None
-        _has_column = None
+    """No-op, kept so existing callers and tests keep working.
+
+    There is no cache to reset any more -- see evening_flags.
+    """
 
 
 def evening_flags(uuids: list[str]) -> dict[str, bool | None]:
@@ -110,33 +63,64 @@ def evening_flags(uuids: list[str]) -> dict[str, bool | None]:
 
     A uuid missing from the database maps to None as well: absent is not the
     same claim as "not in the evening".
+
+    OPENS A FRESH CONNECTION PER CALL, deliberately. The first version cached
+    one at module level, keyed on the path, and that bought three bugs for
+    almost nothing:
+
+      - It served a deleted inode. Replace the file at that path -- a Things
+        Cloud full re-sync, a restore, a library switch -- and the cached
+        connection reads the old file forever, while things.py (which connects
+        per query) reads the new one. The item dict and its evening flag then
+        come from different databases, and nothing in production ever
+        invalidated the cache.
+      - It was not thread-safe. sqlite3 defaults to check_same_thread=True, so
+        a lock gives mutual exclusion but not cross-thread legality; the
+        resulting ProgrammingError was swallowed and the connection never
+        reset, so a second thread degraded to None permanently and silently --
+        indistinguishable from "column missing".
+      - It leaked a file descriptor per failed open, because sqlite3.connect is
+        lazy and the PRAGMA that follows can raise after the fd exists.
+
+    things.py opens a connection per query in roughly 50us. The cache was
+    saving that and costing correctness, which is a bad trade in the one module
+    whose entire premise is that a wrong answer is worse than no answer.
     """
     if not uuids:
         return {}
 
     unknown: dict[str, bool | None] = {u: None for u in uuids}
 
-    with _lock:
-        conn = _connect()
-        if conn is None or not _has_column:
+    conn = None
+    try:
+        conn = sqlite3.connect(f"file:{database_path()}?mode=ro", uri=True)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(TMTask)")}
+        if "startBucket" not in columns:
             return unknown
 
         result = dict(unknown)
-        try:
-            # Chunked to stay well under SQLITE_MAX_VARIABLE_NUMBER.
-            for i in range(0, len(uuids), 500):
-                chunk = uuids[i : i + 500]
-                placeholders = ",".join("?" * len(chunk))
-                rows = conn.execute(
-                    f"SELECT uuid, startBucket FROM TMTask WHERE uuid IN ({placeholders})",
-                    chunk,
-                )
-                for uuid, bucket in rows:
-                    result[uuid] = bucket == _EVENING_BUCKET
-        except Exception:
-            return unknown
-
+        # Chunked to stay well under SQLITE_MAX_VARIABLE_NUMBER.
+        for i in range(0, len(uuids), 500):
+            chunk = uuids[i : i + 500]
+            placeholders = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                f"SELECT uuid, startBucket FROM TMTask WHERE uuid IN ({placeholders})",
+                chunk,
+            )
+            for uuid, bucket in rows:
+                # startBucket is nullable in the live schema. NULL is an absent
+                # value, so it reads as unknown -- calling it False would be the
+                # module's own bug in miniature.
+                result[uuid] = None if bucket is None else bucket == _EVENING_BUCKET
         return result
+    except Exception:
+        return unknown
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def is_evening(uuid: str) -> bool | None:

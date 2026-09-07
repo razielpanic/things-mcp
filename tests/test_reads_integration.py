@@ -211,3 +211,28 @@ class TestThingsUnavailable:
         monkeypatch.setenv("THINGSDB", "/nonexistent/path/things.sqlite")
         with pytest.raises(sqlite3.OperationalError):
             reads.search(query="test")
+
+
+class TestEveningEndToEnd:
+    """The seam that produced things-mcp#9, #21 and #23 had no test.
+
+    The unit tests monkeypatch is_evening and the evening module is tested in
+    isolation, so the join in reads._items_from_dicts -- the place the flag
+    actually reaches a ThingsItem -- was never exercised. That join is exactly
+    what was broken for the whole life of the field.
+    """
+
+    def test_today_reports_the_evening_item_as_evening(self, things_db):
+        by_title = {i.title: i for i in reads.get_today()}
+        assert "Evening meditation" in by_title, "fixture should seed an evening task"
+        assert by_title["Evening meditation"].temporal_state.evening is True
+
+    def test_a_plain_today_item_is_not_evening(self, things_db):
+        by_title = {i.title: i for i in reads.get_today()}
+        assert "Review pull request" in by_title
+        assert by_title["Review pull request"].temporal_state.evening is False
+
+    def test_get_item_agrees_with_the_list_view(self, things_db):
+        item = reads.get_item(uuid="EveningTask000000000001")
+        assert item is not None
+        assert item.temporal_state.evening is True

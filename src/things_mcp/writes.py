@@ -296,7 +296,11 @@ def _record_guarded_write(source: str) -> None:
 
 
 def _check_unexpected_close(
-    uuid: str, pre_status: str | None, post_status: str | None, source: str = "write"
+    uuid: str,
+    pre_status: str | None,
+    post_status: str | None,
+    source: str = "write",
+    already_written: str | None = None,
 ) -> ErrorResponse | None:
     """Report — do not repair — an item that closed during a non-closing write.
 
@@ -332,8 +336,13 @@ def _check_unexpected_close(
             error="UNEXPECTED_STATUS_CHANGE",
             message=(
                 f"Item status went {pre_status!r} -> {post_status!r} during a write "
-                "that did not request it. The item was LEFT AS-IS, not modified. "
-                "The most common cause is a concurrent edit in the Things UI. "
+                "that did not request it. "
+                + (
+                    f"{already_written} "
+                    if already_written
+                    else "The item was LEFT AS-IS, not modified. "
+                )
+                + "The most common cause is a concurrent edit in the Things UI. "
                 "Check the item and set it how you want it; other field changes "
                 f"from this call are not guaranteed. Logged to {anomaly_log_path()}."
             ),
@@ -1209,8 +1218,25 @@ def update_item(
     # when the item is already in that state — `set status to completed` on a
     # completed task un-logbooks it back to open. Make the request idempotent:
     # only emit the status write when it would actually change the status.
-    apply_completed = completed is True and pre_status != "completed"
-    apply_canceled = canceled is True and pre_status != "canceled"
+    # Decide against the status as it is NOW, not as it was before `when=` and
+    # the project/area move ran. `pre_status` was captured before those
+    # delegations and still governs the anomaly guard below -- which is right,
+    # since the guard's job is to notice a close that happened anywhere inside
+    # this call. But using it to decide whether to WRITE a status re-introduces
+    # things-mcp#6's redundant status write whenever a delegation changed it.
+    # Only re-read when something in THIS call could have moved the status
+    # underneath us -- i.e. a delegation actually ran. On the common path
+    # nothing has, so pre_status is still current and the extra read is waste.
+    if when is not None or project_uuid is not None or area_uuid is not None:
+        _mid = things.get(uuid)
+        decision_status = (
+            _mid.get("status") if isinstance(_mid, dict) else None
+        ) or pre_status
+    else:
+        decision_status = pre_status
+
+    apply_completed = completed is True and decision_status != "completed"
+    apply_canceled = canceled is True and decision_status != "canceled"
 
     # completed=False / canceled=False mean "put it back", the inverse of the
     # True case. They used to fall through every branch here and produce
@@ -1232,8 +1258,8 @@ def update_item(
     reopen_requested = (completed is False or canceled is False) and not (
         completed is True or canceled is True
     )
-    apply_reopen = (completed is False and pre_status == "completed") or (
-        canceled is False and pre_status == "canceled"
+    apply_reopen = (completed is False and decision_status == "completed") or (
+        canceled is False and decision_status == "canceled"
     )
 
     if apply_completed:
@@ -1330,12 +1356,12 @@ end tell
     if reopen_requested:
         if apply_reopen:
             parts.append("reopened")
-        elif pre_status in ("completed", "canceled"):
+        elif decision_status in ("completed", "canceled"):
             # Say which status it actually has, so a mismatched flag reads as a
             # deliberate refusal rather than a mystery no-op.
             parts.append(
-                f"reopen skipped (no-op — item is {pre_status}; use "
-                f"{'completed' if pre_status == 'completed' else 'canceled'}=false)"
+                f"reopen skipped (no-op — item is {decision_status}; use "
+                f"{'completed' if decision_status == 'completed' else 'canceled'}=false)"
             )
         else:
             parts.append("reopened (no-op — item was already open)")
@@ -1588,6 +1614,12 @@ def link_blocker(
         dep_pre_status,
         dep_after.get("status"),
         source="link_blocker",
+        already_written=(
+            "The dependent side WAS written before this was noticed — it now "
+            f"carries the `gated` tag and a link to {blocker_uuid}, while the "
+            "blocker side is not wired. Re-run link_blocker to finish it, or "
+            "unlink_blocker to undo it."
+        ),
     )
     if guard is not None:
         return guard

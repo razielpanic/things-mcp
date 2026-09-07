@@ -14,7 +14,7 @@ pytest
 That's the whole setup. No build step, no code generation, no external services.
 
 - `pip install -e ".[dev]"` installs runtime dependencies (`mcp[cli]`, `things.py`, `pydantic`) plus dev dependencies (`pytest`, `pytest-asyncio`)
-- `pytest` runs the 167-test suite. Expect a clean pass in ~0.5 seconds on a modern Mac
+- `pytest` runs the test suite. Expect a clean pass in ~0.5 seconds on a modern Mac
 - Tests run against a fixture SQLite database built fresh for each test session by `tests/fixtures/create_fixture.py` — they don't touch your real Things 3 database, so it's safe to run pytest anytime
 
 ## Architecture
