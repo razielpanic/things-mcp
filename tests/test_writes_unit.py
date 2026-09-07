@@ -6,10 +6,13 @@ or AppleScript invocations -- these are pure validation/string functions.
 
 from __future__ import annotations
 
+import re
 from datetime import date
+from pathlib import Path
 
 import pytest
 
+from things_mcp import writes
 from things_mcp.writes import (
     _REL_GATED_BY,
     _applescript_date_block,
@@ -282,3 +285,58 @@ class TestRelationPresent:
 
     def test_relation_present_on_none_notes(self):
         assert not _relation_present(None, _REL_GATED_BY, UUID_A)
+
+
+class TestWriteGuardCoverage:
+    """The write census must cover the write surface it claims to.
+
+    things-mcp#27: the census counted only schedule_item and update_item, so a
+    clean run would have reported "zero anomalies" while move_to_context,
+    link_blocker, unlink_blocker and reconcile_completion were never watched.
+    These tests keep the guarded set and the exposed set in step, so a new write
+    tool cannot quietly narrow the census.
+    """
+
+    @staticmethod
+    def _exposed_write_tools() -> set[str]:
+        """Names of writes.* functions the MCP server actually calls."""
+        server_src = (
+            Path(writes.__file__).parent / "server.py"
+        ).read_text(encoding="utf-8")
+        return set(re.findall(r"\bwrites\.([a-z_][a-z0-9_]*)\(", server_src))
+
+    @staticmethod
+    def _guarded_sources() -> set[str]:
+        """source= labels passed to _check_unexpected_close in writes.py."""
+        writes_src = Path(writes.__file__).read_text(encoding="utf-8")
+        return set(re.findall(r'source="([a-z_]+)"', writes_src))
+
+    def test_every_exposed_write_tool_is_guarded(self):
+        exposed = self._exposed_write_tools()
+        assert exposed, "found no writes.* calls in server.py -- check the regex"
+        guarded = self._guarded_sources()
+        declared = set(writes.UNGUARDED_WRITE_TOOLS)
+        uncovered = exposed - guarded - declared
+        assert not uncovered, (
+            f"write tool(s) {sorted(uncovered)} neither route through "
+            "_check_unexpected_close nor appear in writes.UNGUARDED_WRITE_TOOLS. "
+            "Guard them, or declare there why the guard does not apply -- an "
+            "uncounted write path makes the census narrower than the question "
+            "it answers."
+        )
+
+    def test_exemptions_are_real_tools_with_reasons(self):
+        exposed = self._exposed_write_tools()
+        for name, reason in writes.UNGUARDED_WRITE_TOOLS.items():
+            assert name in exposed, (
+                f"{name} is declared exempt but is not an exposed write tool; "
+                "drop the stale entry."
+            )
+            assert len(reason) > 20, f"{name}'s exemption reason is too thin."
+
+    def test_exemptions_and_guards_do_not_overlap(self):
+        overlap = set(writes.UNGUARDED_WRITE_TOOLS) & self._guarded_sources()
+        assert not overlap, (
+            f"{sorted(overlap)} are both guarded and declared exempt -- the "
+            "exemption is stale and should be removed."
+        )

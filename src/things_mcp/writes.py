@@ -270,6 +270,36 @@ def _check_unexpected_close(
     return None
 
 
+# Every write tool the server exposes must either route through
+# _check_unexpected_close -- so it lands in the census and any close during the
+# write is logged -- or declare below why it cannot.
+#
+# The reason this is enforced rather than remembered: an empty anomaly log is
+# only evidence if the denominator covers the write surface the question asks
+# about. things-mcp#27 found the census watching 2 of at least 5 write paths, so
+# 300 clean writes would have printed "zero anomalies" while three surfaces were
+# never observed -- a falsification that cannot be defended, because the
+# numerator was blind exactly where the denominator was.
+#
+# The default is "must be guarded". Adding a write tool without a guard fails
+# tests/test_writes_unit.py::test_every_exposed_write_tool_is_guarded rather
+# than silently shrinking the census.
+UNGUARDED_WRITE_TOOLS: dict[str, str] = {
+    "create_todo": (
+        "Creates the item. There is no prior status, so there is no "
+        "close-during-write to detect."
+    ),
+    "create_project": (
+        "Creates the item. There is no prior status, so there is no "
+        "close-during-write to detect."
+    ),
+    "delete_item": (
+        "Trashing the item is the requested effect. A status change here is "
+        "the point of the call, not an anomaly."
+    ),
+}
+
+
 def _verify_url_scheme_write(uuid: str, *, delay: float = 0.5) -> dict | None:
     """Wait for URL scheme to process, then re-read item from SQLite.
 
@@ -1257,6 +1287,9 @@ def move_to_context(
             message="Provide project_uuid or area_uuid, not both.",
         )
 
+    _pre = things.get(uuid)
+    pre_status = _pre.get("status") if isinstance(_pre, dict) else None
+
     if project_uuid is not None:
         _validate_uuid(project_uuid)
         script = f'''
@@ -1285,6 +1318,15 @@ end tell
             error="VERIFY_FAILED",
             message="Item not found after move.",
         )
+
+    guard = _check_unexpected_close(
+        uuid,
+        pre_status,
+        raw.get("status") if isinstance(raw, dict) else None,
+        source="move_to_context",
+    )
+    if guard is not None:
+        return guard
 
     return SuccessResponse(
         uuid=uuid,
@@ -1376,6 +1418,8 @@ def link_blocker(
 
     blocker_title = blocker.get("title") or ""
     dependent_title = dependent.get("title") or ""
+    blk_pre_status = blocker.get("status")
+    dep_pre_status = dependent.get("status")
 
     # ---- Side 1: dependent gets `gated` + a 'Gated by' link to the blocker ----
     dep_tags = dependent.get("tags") or []
@@ -1408,6 +1452,15 @@ def link_blocker(
             ),
         )
 
+    guard = _check_unexpected_close(
+        dependent_uuid,
+        dep_pre_status,
+        dep_after.get("status"),
+        source="link_blocker",
+    )
+    if guard is not None:
+        return guard
+
     # ---- Side 2: blocker gets a 'Gates' link to the dependent ----
     blk_notes = blocker.get("notes") or ""
     blk_text, blk_entries = _parse_relation_block(blk_notes, _REL_GATES)
@@ -1434,6 +1487,15 @@ def link_blocker(
             error="PARTIAL_LINK",
             message=_partial_link_message(blocker_uuid, dependent_uuid),
         )
+
+    guard = _check_unexpected_close(
+        blocker_uuid,
+        blk_pre_status,
+        blk_after.get("status"),
+        source="link_blocker",
+    )
+    if guard is not None:
+        return guard
 
     return SuccessResponse(
         uuid=dependent_uuid,
@@ -1464,8 +1526,10 @@ def unlink_blocker(
     _validate_uuid(blocker_uuid)
     _validate_uuid(dependent_uuid)
 
-    blocker_exists = things.get(blocker_uuid) is not None
-    dependent_exists = things.get(dependent_uuid) is not None
+    blk_pre = things.get(blocker_uuid)
+    dep_pre = things.get(dependent_uuid)
+    blocker_exists = blk_pre is not None
+    dependent_exists = dep_pre is not None
     if not blocker_exists and not dependent_exists:
         return ErrorResponse(
             error="NOT_FOUND",
@@ -1485,6 +1549,15 @@ def unlink_blocker(
             error="VERIFY_FAILED",
             message=f"Blocker {blocker_uuid} still gates {dependent_uuid} after unlink.",
         )
+    if blk_after is not None and blk_pre is not None:
+        guard = _check_unexpected_close(
+            blocker_uuid,
+            blk_pre.get("status"),
+            blk_after.get("status"),
+            source="unlink_blocker",
+        )
+        if guard is not None:
+            return guard
 
     dep_after = things.get(dependent_uuid)
     if dep_after is not None:
@@ -1505,6 +1578,15 @@ def unlink_blocker(
                     "having no remaining blockers."
                 ),
             )
+        if dep_pre is not None:
+            guard = _check_unexpected_close(
+                dependent_uuid,
+                dep_pre.get("status"),
+                dep_after.get("status"),
+                source="unlink_blocker",
+            )
+            if guard is not None:
+                return guard
 
     return SuccessResponse(
         uuid=dependent_uuid,
@@ -1539,6 +1621,16 @@ def reconcile_completion(*, uuid: str) -> SuccessResponse | ErrorResponse:
     notes = item.get("notes") or ""
     _, blockers = _parse_relation_block(notes, _REL_GATED_BY)  # uuid as dependent
     _, dependents = _parse_relation_block(notes, _REL_GATES)  # uuid as blocker
+
+    # Counterpart status before any write, so a close during the scrub is
+    # attributable. The subject itself is normally already closed (that is why
+    # reconcile runs), but every counterpart is an open item being written.
+    pre_statuses: dict[str, str | None] = {uuid: item.get("status")}
+    for _title, counterpart_uuid in blockers + dependents:
+        counterpart_pre = things.get(counterpart_uuid)
+        pre_statuses[counterpart_uuid] = (
+            counterpart_pre.get("status") if isinstance(counterpart_pre, dict) else None
+        )
 
     # As a dependent: detach uuid from each blocker, both directions.
     for _title, blocker_uuid in blockers:
@@ -1579,6 +1671,22 @@ def reconcile_completion(*, uuid: str) -> SuccessResponse | ErrorResponse:
                 error="VERIFY_FAILED",
                 message=f"Dependent {dependent_uuid} still references {uuid} after reconcile.",
             )
+
+    # Census + close check for every item this call wrote to, subject included.
+    for touched_uuid in pre_statuses:
+        touched_after = (
+            after if touched_uuid == uuid else things.get(touched_uuid)
+        )
+        if touched_after is None:
+            continue
+        guard = _check_unexpected_close(
+            touched_uuid,
+            pre_statuses[touched_uuid],
+            touched_after.get("status"),
+            source="reconcile_completion",
+        )
+        if guard is not None:
+            return guard
 
     count = len(blockers) + len(dependents)
     return SuccessResponse(

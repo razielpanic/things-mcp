@@ -7,6 +7,7 @@ the proper error responses are returned.
 
 from __future__ import annotations
 
+import json
 import re
 from unittest.mock import MagicMock, patch
 
@@ -1054,3 +1055,119 @@ class TestUpdateItemStatusIdempotence:
         )
         assert isinstance(result, ErrorResponse)
         assert result.error == "INVALID_INPUT"
+
+
+class TestGuardCoverageOnRelationAndMoveWrites:
+    """The paths things-mcp#27 found uncounted: move and the blocker relations.
+
+    Each is a non-completing write, so each must both land in the census and
+    report a close that happens inside its write window.
+    """
+
+    @patch("things_mcp.writes._log_status_anomaly")
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_move_to_context_reports_unexpected_close(
+        self, mock_run, mock_get, mock_log
+    ):
+        mock_run.return_value = _mock_subprocess_ok()
+        # pre-read incomplete, post-move verify completed
+        mock_get.side_effect = [
+            _raw_task(status="incomplete"),
+            _raw_task(status="completed"),
+        ]
+
+        result = writes.move_to_context(uuid=VALID_UUID, area_uuid=ALT_UUID)
+
+        assert isinstance(result, ErrorResponse)
+        assert result.error == "UNEXPECTED_STATUS_CHANGE"
+        mock_log.assert_called_once()
+        assert mock_log.call_args.args[3] == "move_to_context"
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_move_to_context_counts_a_clean_write(
+        self, mock_run, mock_get, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("THINGS_MCP_WRITE_CENSUS", str(tmp_path / "census.json"))
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.return_value = _raw_task()
+
+        result = writes.move_to_context(uuid=VALID_UUID, area_uuid=ALT_UUID)
+
+        assert isinstance(result, SuccessResponse)
+        census = json.loads((tmp_path / "census.json").read_text())
+        assert census["by_source"]["move_to_context"] == 1
+
+    @patch("things_mcp.writes._log_status_anomaly")
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_link_blocker_reports_a_close_on_the_dependent(
+        self, mock_run, mock_get, mock_log
+    ):
+        mock_run.return_value = _mock_subprocess_ok()
+        gated_notes = f"{writes._REL_GATED_BY}\nBlocker\nthings:///show?id={BLK}"
+        mock_get.side_effect = [
+            _raw_task(uuid=BLK, status="incomplete"),  # blocker pre-read
+            _raw_task(uuid=DEP, status="incomplete"),  # dependent pre-read
+            # dependent verify: wired correctly, but now closed
+            _raw_task(
+                uuid=DEP,
+                status="completed",
+                tags=["gated"],
+                notes=gated_notes,
+            ),
+        ]
+
+        result = writes.link_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+
+        assert isinstance(result, ErrorResponse)
+        assert result.error == "UNEXPECTED_STATUS_CHANGE"
+        mock_log.assert_called_once()
+        assert mock_log.call_args.args[3] == "link_blocker"
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_unlink_blocker_counts_both_sides(
+        self, mock_run, mock_get, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("THINGS_MCP_WRITE_CENSUS", str(tmp_path / "census.json"))
+        mock_run.return_value = _mock_subprocess_ok()
+        # No relation blocks anywhere: unwiring is a clean no-op on both sides.
+        mock_get.return_value = _raw_task()
+
+        result = writes.unlink_blocker(blocker_uuid=BLK, dependent_uuid=DEP)
+
+        assert isinstance(result, SuccessResponse)
+        census = json.loads((tmp_path / "census.json").read_text())
+        assert census["by_source"]["unlink_blocker"] == 2
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_reconcile_counts_the_subject_and_each_counterpart(
+        self, mock_run, mock_get, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("THINGS_MCP_WRITE_CENSUS", str(tmp_path / "census.json"))
+        mock_run.return_value = _mock_subprocess_ok()
+
+        subject_notes = f"{writes._REL_GATED_BY}\nBlocker\nthings:///show?id={BLK}"
+
+        def fake_get(uuid):
+            if uuid == VALID_UUID:
+                # Subject keeps its block only on the first read; the scrub
+                # clears it, and the verify read must see it gone.
+                if not fake_get.subject_scrubbed:
+                    fake_get.subject_scrubbed = True
+                    return _raw_task(status="completed", notes=subject_notes)
+                return _raw_task(status="completed")
+            return _raw_task(uuid=BLK)
+
+        fake_get.subject_scrubbed = False
+        mock_get.side_effect = fake_get
+
+        result = writes.reconcile_completion(uuid=VALID_UUID)
+
+        assert isinstance(result, SuccessResponse)
+        census = json.loads((tmp_path / "census.json").read_text())
+        # subject + one blocker counterpart
+        assert census["by_source"]["reconcile_completion"] == 2
