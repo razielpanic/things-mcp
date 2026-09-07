@@ -109,9 +109,16 @@ class TestTemporalState:
         ts = TemporalState(derived_list="Anytime")
         assert ts.start == "Anytime"
 
-    def test_evening_defaults_to_false(self):
+    def test_evening_defaults_to_none_not_false(self):
+        """Unknown must not default to a claim.
+
+        This previously asserted the default was False, which pinned the exact
+        bug the evening fix removed: a TemporalState built without the field
+        would report "not in the evening" having never looked. None is the
+        honest default; False is a statement.
+        """
         ts = TemporalState(derived_list="Anytime")
-        assert ts.evening is False
+        assert ts.evening is None
 
     def test_start_date_optional(self):
         ts = TemporalState(derived_list="Anytime")

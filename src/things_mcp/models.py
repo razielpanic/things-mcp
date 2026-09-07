@@ -108,7 +108,7 @@ class TemporalState(BaseModel):
     # three dev issues were filed against writes that had actually landed. A
     # falsy-but-honest null tells a caller that verification is unavailable;
     # False tells it the item is not in the evening.
-    evening: Optional[bool] = False
+    evening: Optional[bool] = None
 
 
 class ItemContext(BaseModel):

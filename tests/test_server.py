@@ -287,11 +287,19 @@ class TestUnknownArgumentsAreRejected:
     """
 
     def test_every_tool_forbids_extras(self):
+        """Asserts the state of every registered tool, not the return value.
+
+        The first version called forbid_unknown_arguments() and then asserted
+        over its return -- it verified what it had just done and could not
+        detect an unhardened tool. Read the registry directly instead, so a
+        tool registered after the module-level call, or added at runtime, fails
+        here.
+        """
         from things_mcp import server
 
-        hardened = server.forbid_unknown_arguments()
-        assert hardened, "no tools found to harden"
-        for name in hardened:
+        registered = list(server.mcp._tool_manager._tools)
+        assert registered, "no tools registered"
+        for name in registered:
             tool = server.mcp._tool_manager._tools[name]
             assert tool.fn_metadata.arg_model.model_config.get("extra") == "forbid", (
                 f"{name} still ignores undeclared arguments"
@@ -308,15 +316,27 @@ class TestUnknownArgumentsAreRejected:
         assert tool.parameters.get("additionalProperties") is False
 
     async def test_list_title_is_rejected_instead_of_dropped(self):
-        """The original repro. It must fail before any write happens."""
+        """The original repro. It must fail before any write happens.
+
+        subprocess.run is patched even though validation should reject this
+        before the tool body runs. If the hardening regresses -- the exact
+        failure this test exists to catch -- an unpatched call would reach
+        writes.create_todo, then AppleScript, and put a real item in the user's
+        Things. A test must not be able to mutate live data by failing.
+        """
+        from unittest.mock import patch
+
         from mcp.server.fastmcp.exceptions import ToolError
 
         from things_mcp import server
 
-        with pytest.raises(ToolError) as exc:
-            await server.mcp.call_tool(
-                "create_todo", {"title": "should never be created", "list_title": "Today"}
-            )
+        with patch("things_mcp.writes.subprocess.run") as mock_run:
+            with pytest.raises(ToolError) as exc:
+                await server.mcp.call_tool(
+                    "create_todo",
+                    {"title": "should never be created", "list_title": "Today"},
+                )
+            mock_run.assert_not_called()
         assert "list_title" in str(exc.value)
         assert "not permitted" in str(exc.value).lower()
 
