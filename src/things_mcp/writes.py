@@ -16,6 +16,7 @@ Security:
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
@@ -207,46 +208,89 @@ def census_path() -> Path:
 
 
 def _record_guarded_write(source: str) -> None:
-    """Count one write that passed through the close check. Best-effort."""
+    """Count one write that passed through the close check.
+
+    Locked and written atomically. The first version was an unlocked
+    read-modify-write ending in `write_text`, which truncates before it writes:
+    a second process reading inside that window got partial JSON, the
+    `except: data = {}` swallowed the error, and the census silently RESET to
+    one write with `first` stamped to now -- erasing months of accumulation and
+    the regime history with it, leaving no trace that it had happened. Measured
+    at 4 processes x 400 writes reporting 15. Two MCP server processes run
+    concurrently on this machine, so the window is real, and a crash mid-write
+    did the same thing.
+
+    Best-effort by design: a census that cannot be written must never break a
+    Things write. But it must not silently destroy itself either.
+    """
     try:
         p = census_path()
         p.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
-        now = datetime.now().astimezone().isoformat()
-        data["writes"] = int(data.get("writes", 0)) + 1
-        data.setdefault("first", now)
-        data["last"] = now
-        by = data.setdefault("by_source", {})
-        by[source] = int(by.get(source, 0)) + 1
 
-        # Which write paths this count covers. Without it a census spanning an
-        # instrumentation change reads as one clean sample when it is really two,
-        # and the older half was blind to paths the question asks about -- the
-        # same undefendable-falsification trap that motivated the counter.
-        # Widening coverage closes the previous regime rather than rewriting it:
-        # the old writes stay counted, and stay honestly labelled.
-        coverage = sorted(GUARDED_WRITE_TOOLS)
-        prior = data.get("coverage")
-        if prior is None and int(data.get("writes", 1)) > 1:
-            # A census that predates coverage tracking. Its writes are real but
-            # their coverage is unrecorded, so they must not be absorbed into
-            # the current regime as though they had been watched the same way.
-            prior = ["(unrecorded — census predates coverage stamping)"]
-        if prior is not None and prior != coverage:
-            regimes = data.setdefault("regimes", [])
-            regimes.append(
-                {
-                    "coverage": prior,
-                    "writes": int(data.get("writes", 1)) - 1,
-                    "until": now,
-                }
-            )
-        data["coverage"] = coverage
+        lock_path = p.with_suffix(p.suffix + ".lock")
+        with open(lock_path, "a+") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                try:
+                    data = json.loads(p.read_text(encoding="utf-8"))
+                except Exception:
+                    data = {}
+                # json.loads succeeds on `null` and `[]`; the .get() below would
+                # then raise AttributeError into the outer handler and the file
+                # would never be rewritten, freezing the count forever.
+                if not isinstance(data, dict):
+                    data = {}
 
-        p.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                now = datetime.now().astimezone().isoformat()
+                data["writes"] = int(data.get("writes", 0)) + 1
+                data.setdefault("first", now)
+                data["last"] = now
+                by = data.setdefault("by_source", {})
+                if not isinstance(by, dict):
+                    by = data["by_source"] = {}
+                by[source] = int(by.get(source, 0)) + 1
+
+                # Which write paths this count covers. Without it a census
+                # spanning an instrumentation change reads as one clean sample
+                # when it is really two, and the older half was blind to paths
+                # the question asks about.
+                coverage = sorted(GUARDED_WRITE_TOOLS)
+                regimes = data.get("regimes")
+                if not isinstance(regimes, list):
+                    regimes = []
+                prior = data.get("coverage")
+                if prior is None and int(data.get("writes", 1)) > 1:
+                    prior = ["(unrecorded — census predates coverage stamping)"]
+                if prior is not None and prior != coverage:
+                    # This regime's OWN count, not the running total. The first
+                    # version stored `writes - 1`, which is right only for the
+                    # first rollover; every later one over-credited the closing
+                    # regime with every write that preceded it. That inflates a
+                    # narrow, half-blind regime into looking well-observed --
+                    # the direction that makes a bogus CLOSE more likely, which
+                    # is the exact failure the counter exists to prevent.
+                    already = sum(
+                        int(r.get("writes", 0))
+                        for r in regimes
+                        if isinstance(r, dict)
+                    )
+                    regimes.append(
+                        {
+                            "coverage": prior,
+                            "writes": max(int(data["writes"]) - 1 - already, 0),
+                            "until": now,
+                        }
+                    )
+                    data["regimes"] = regimes
+                data["coverage"] = coverage
+
+                # Atomic: write beside the target, then rename over it. A reader
+                # sees the old file or the new one, never a truncated one.
+                tmp = p.with_suffix(p.suffix + ".tmp")
+                tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                os.replace(tmp, p)
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
     except Exception:
         pass
 
@@ -1177,10 +1221,20 @@ def update_item(
     # A close request wins over a reopen request, so completed=False with
     # canceled=True still cancels; the explicit close is the more specific
     # instruction.
+    # Each flag reopens only the status it names. The first cut accepted either
+    # False against either closed status, which meant canceled=false
+    # un-completed a completed item -- a flag doing something its name does not
+    # say, on the user's finished work. With the user and the agent both
+    # ticking checkboxes, a caller sending default field values could silently
+    # un-logbook real completions. Now completed=false only un-completes and
+    # canceled=false only un-cancels; a mismatched flag is the no-op it was
+    # before this feature existed.
     reopen_requested = (completed is False or canceled is False) and not (
         completed is True or canceled is True
     )
-    apply_reopen = reopen_requested and pre_status in ("completed", "canceled")
+    apply_reopen = (completed is False and pre_status == "completed") or (
+        canceled is False and pre_status == "canceled"
+    )
 
     if apply_completed:
         script_lines.append("set status of theToDo to completed")
@@ -1274,11 +1328,17 @@ end tell
             else "canceled (no-op — item was already canceled)"
         )
     if reopen_requested:
-        parts.append(
-            "reopened"
-            if apply_reopen
-            else "reopened (no-op — item was already open)"
-        )
+        if apply_reopen:
+            parts.append("reopened")
+        elif pre_status in ("completed", "canceled"):
+            # Say which status it actually has, so a mismatched flag reads as a
+            # deliberate refusal rather than a mystery no-op.
+            parts.append(
+                f"reopen skipped (no-op — item is {pre_status}; use "
+                f"{'completed' if pre_status == 'completed' else 'canceled'}=false)"
+            )
+        else:
+            parts.append("reopened (no-op — item was already open)")
     if project_uuid is not None:
         parts.append("project")
     if area_uuid is not None:

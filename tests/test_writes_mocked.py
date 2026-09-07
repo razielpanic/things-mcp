@@ -1387,3 +1387,65 @@ class TestReopen:
 
         assert isinstance(result, SuccessResponse)
         assert "title" in result.message and "reopened" in result.message
+
+
+class TestReopenIsGatedToItsOwnStatus:
+    """A flag must not act on a status it does not name.
+
+    canceled=false used to un-complete a completed item. With the user and the
+    agent both ticking checkboxes in Things, a caller sending default field
+    values could quietly pull finished work back out of the Logbook.
+    """
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_canceled_false_does_not_uncomplete_a_completed_item(
+        self, mock_run, mock_get
+    ):
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.return_value = _raw_task(status="completed")
+
+        result = writes.update_item(uuid=VALID_UUID, canceled=False)
+
+        assert isinstance(result, SuccessResponse)
+        scripts = [
+            (c.kwargs.get("input") or (c.args[0] if c.args else ""))
+            for c in mock_run.call_args_list
+        ]
+        assert not any("set status of theToDo to open" in s for s in scripts), (
+            "canceled=false must not touch a completed item"
+        )
+        # And it must say why, not no-op mysteriously.
+        assert "completed" in result.message and "no-op" in result.message
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_completed_false_does_not_uncancel_a_canceled_item(
+        self, mock_run, mock_get
+    ):
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.return_value = _raw_task(status="canceled")
+
+        result = writes.update_item(uuid=VALID_UUID, completed=False)
+
+        assert isinstance(result, SuccessResponse)
+        scripts = [
+            (c.kwargs.get("input") or (c.args[0] if c.args else ""))
+            for c in mock_run.call_args_list
+        ]
+        assert not any("set status of theToDo to open" in s for s in scripts)
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_the_matching_flag_still_reopens(self, mock_run, mock_get):
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.side_effect = [
+            _raw_task(status="canceled"),
+            _raw_task(status="incomplete"),
+            _raw_task(status="incomplete"),
+        ]
+
+        result = writes.update_item(uuid=VALID_UUID, canceled=False)
+
+        assert isinstance(result, SuccessResponse)
+        assert "reopened" in result.message
