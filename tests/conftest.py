@@ -90,3 +90,22 @@ def _isolate_anomaly_log(tmp_path, monkeypatch):
     """
     monkeypatch.setenv("THINGS_MCP_ANOMALY_LOG", str(tmp_path / "anomalies.jsonl"))
     monkeypatch.setenv("THINGS_MCP_WRITE_CENSUS", str(tmp_path / "census.json"))
+
+
+@pytest.fixture(autouse=True)
+def _never_touch_the_real_database(fixture_db, monkeypatch):
+    """Point every test at the fixture database, mocked ones included.
+
+    The `things_db` fixture only covers tests that ask for it. Reads that do
+    not go through things.py -- evening.py queries TMTask.startBucket directly
+    -- would otherwise fall back to the default path and open the developer's
+    real Things database. Read-only, but the promise in CONTRIBUTING.md is that
+    pytest does not touch it at all, and a promise that holds only for the
+    tests that remembered to opt in is not a promise.
+    """
+    from things_mcp import evening
+
+    monkeypatch.setenv("THINGSDB", str(fixture_db))
+    evening.reset_cache()
+    yield
+    evening.reset_cache()
