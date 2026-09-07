@@ -62,7 +62,12 @@ def create_schema(conn: sqlite3.Connection) -> None:
             stopDate REAL,
             rt1_recurrenceRule TEXT,
             deadlineSuppressionDate TEXT,
-            evening INTEGER NOT NULL DEFAULT 0,
+            -- Things' name for the Today sub-section: 0 = Today, 1 = This
+            -- Evening. This column used to be called `evening` here, a name
+            -- the real Things schema has never used. The fixture agreed with
+            -- reads.py's assumption instead of with Things, so tests passed
+            -- over a field that was a constant False in every real call.
+            startBucket INTEGER NOT NULL DEFAULT 0,
             reminderTime INTEGER
         );
 
@@ -72,10 +77,22 @@ def create_schema(conn: sqlite3.Connection) -> None:
             "index" INTEGER NOT NULL DEFAULT 0
         );
 
+        -- things.py joins area tags on every area query, so a fixture without
+        -- this table cannot serve get_areas() at all. It was missing from this
+        -- generator while the committed .sqlite had it: the database had been
+        -- hand-edited, so regenerating it -- the one thing this script is for
+        -- -- silently produced a fixture that could not run the suite.
+        CREATE TABLE IF NOT EXISTS TMAreaTag (
+            areas TEXT NOT NULL,
+            tags TEXT NOT NULL,
+            PRIMARY KEY (areas, tags)
+        );
+
         CREATE TABLE IF NOT EXISTS TMTag (
             uuid TEXT PRIMARY KEY,
             title TEXT NOT NULL DEFAULT '',
-            "index" INTEGER NOT NULL DEFAULT 0
+            "index" INTEGER NOT NULL DEFAULT 0,
+            shortcut TEXT DEFAULT NULL
         );
 
         CREATE TABLE IF NOT EXISTS TMTaskTag (
@@ -89,7 +106,10 @@ def create_schema(conn: sqlite3.Connection) -> None:
             task TEXT NOT NULL,
             title TEXT NOT NULL DEFAULT '',
             status INTEGER NOT NULL DEFAULT 0,
-            "index" INTEGER NOT NULL DEFAULT 0
+            "index" INTEGER NOT NULL DEFAULT 0,
+            stopDate REAL DEFAULT NULL,
+            userModificationDate REAL DEFAULT NULL,
+            creationDate REAL DEFAULT NULL
         );
 
         CREATE TABLE IF NOT EXISTS TMSettings (
@@ -123,7 +143,8 @@ def seed_data(conn: sqlite3.Connection) -> None:
 
     tasks = [
         # (uuid, type, title, status, start, startDate, deadline, notes,
-        #  project, area, heading, trashed, index, todayIndex, created, modified, stopDate, evening)
+        #  project, area, heading, trashed, index, todayIndex, created, modified,
+        #  stopDate, startBucket)
         (
             "InboxTask00000000000001", 0, "Buy groceries", 0, 0,
             None, None, "Milk, eggs, bread",
@@ -175,7 +196,7 @@ def seed_data(conn: sqlite3.Connection) -> None:
             "ProjectTask000000000001", "AreaWork0000000000000001", None, 0, 0, 0,
             created_ts, modified_ts, None, 0,
         ),
-        # An evening task (Today + evening flag)
+        # An evening task: Today with startBucket=1 (This Evening)
         (
             "EveningTask000000000001", 0, "Evening meditation", 0, 1,
             things_date(today), None, None,
@@ -193,7 +214,7 @@ def seed_data(conn: sqlite3.Connection) -> None:
         """INSERT INTO TMTask
             (uuid, type, title, status, start, startDate, deadline, notes,
              project, area, heading, trashed, "index", todayIndex,
-             creationDate, userModificationDate, stopDate, evening)
+             creationDate, userModificationDate, stopDate, startBucket)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         tasks,
     )
@@ -236,28 +257,49 @@ def seed_data(conn: sqlite3.Connection) -> None:
     )
 
 
-def main() -> None:
-    """Generate the fixture database."""
-    if os.path.exists(DB_PATH):
-        os.remove(DB_PATH)
+def build(db_path: str = None, *, quiet: bool = False) -> str:
+    """Generate the fixture database at ``db_path`` and return that path.
 
-    conn = sqlite3.connect(DB_PATH)
+    Takes a path so the test suite can build a fresh copy per session instead
+    of reading a committed one. Every date in here is relative to the moment of
+    generation, so a stored database rots: DeadlineTask is ``today + 14 days``,
+    and once that passes, ``things.today()`` starts returning it (things.py's
+    today includes ``deadline="past"``) with no start_date at all. That is what
+    made test_today_returns_items fail on clean HEAD from 14 days after the
+    committed fixture was built -- a test-data time bomb, not a code fault.
+    """
+    db_path = db_path or DB_PATH
+    if os.path.exists(db_path):
+        os.remove(db_path)
+
+    conn = sqlite3.connect(db_path)
     try:
         create_schema(conn)
         seed_meta(conn)
         seed_data(conn)
         conn.commit()
-        print(f"Created fixture database: {DB_PATH}")
+        if not quiet:
+            print(f"Created fixture database: {db_path}")
 
         # Verify
         version = conn.execute(
             "SELECT value FROM Meta WHERE key = 'databaseVersion'"
         ).fetchone()[0]
         task_count = conn.execute("SELECT COUNT(*) FROM TMTask").fetchone()[0]
-        print(f"  databaseVersion plist present: True")
-        print(f"  Tasks: {task_count}")
+        if not quiet:
+            print(f"  databaseVersion plist present: True")
+            print(f"  Tasks: {task_count}")
+        assert version, "databaseVersion missing from Meta"
+        assert task_count, "no tasks seeded"
     finally:
         conn.close()
+
+    return db_path
+
+
+def main() -> None:
+    """Generate the committed fixture database in place."""
+    build()
 
 
 if __name__ == "__main__":

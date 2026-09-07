@@ -3,19 +3,48 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
-FIXTURE_DB = FIXTURE_DIR / "things_fixture.sqlite"
+
+sys.path.insert(0, str(FIXTURE_DIR))
+import create_fixture  # noqa: E402
+
+
+@pytest.fixture(scope="session")
+def fixture_db(tmp_path_factory) -> Path:
+    """Build a fresh fixture database for this test session.
+
+    Built rather than read, because every date the generator writes is relative
+    to the moment of generation. A committed .sqlite freezes those dates and
+    then rots: DeadlineTask is `today + 14 days`, and once that passes,
+    things.today() begins returning it (things.py's today includes
+    `deadline="past"`) with no start_date. That is exactly how
+    test_today_returns_items came to fail on clean HEAD while nothing in the
+    code had changed -- and regenerating by hand only resets the timer.
+
+    Building per session also keeps the generator honest: it is now the only
+    way the suite gets a database, so a schema column added by hand to the
+    committed file (which is how TMAreaTag, TMTag.shortcut and three
+    TMChecklistItem columns came to exist only there) fails immediately
+    instead of lying dormant until someone regenerates.
+    """
+    return Path(
+        create_fixture.build(
+            str(tmp_path_factory.mktemp("things") / "things_fixture.sqlite"),
+            quiet=True,
+        )
+    )
 
 
 @pytest.fixture()
-def things_db(monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point things.py at the fixture database via THINGSDB env var."""
-    monkeypatch.setenv("THINGSDB", str(FIXTURE_DB))
-    return FIXTURE_DB
+def things_db(monkeypatch: pytest.MonkeyPatch, fixture_db: Path) -> Path:
+    """Point things.py at the session's freshly built fixture database."""
+    monkeypatch.setenv("THINGSDB", str(fixture_db))
+    return fixture_db
 
 
 @pytest.fixture()

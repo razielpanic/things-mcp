@@ -48,3 +48,7 @@ htmlcov/
 
 # Backup git directory from history rewrite (safe to delete)
 /.git.bak/
+
+# Built per test session by tests/fixtures/create_fixture.py, never committed
+# (a stored copy rots and gets hand-edited -- see CONTRIBUTING.md)
+tests/fixtures/things_fixture.sqlite

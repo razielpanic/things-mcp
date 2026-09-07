@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 import sqlite3
 
+from datetime import date
+
 import pytest
 import things
 
@@ -35,12 +37,25 @@ class TestTodayReads:
     """Test get_today against fixture DB."""
 
     def test_today_returns_items(self, things_db):
+        """Today is scheduled-for-today plus anything with an overdue deadline.
+
+        The second half is easy to miss: things.py's today() passes
+        deadline="past", so a task with no start_date at all shows up once its
+        deadline goes by, deriving to Anytime. Asserting every item derives to
+        Today/Upcoming was therefore wrong on its own terms -- it just could not
+        fail until the fixture's deadlines aged past today.
+        """
         items = reads.get_today()
-        # Fixture has items scheduled for today
         assert isinstance(items, list)
+        assert items, "fixture should seed at least one Today item"
+        today = date.today()
         for item in items:
             assert isinstance(item, ThingsItem)
-            assert item.temporal_state.derived_list in ("Today", "Upcoming")
+            overdue = item.deadline is not None and item.deadline <= today
+            assert item.temporal_state.derived_list in ("Today", "Upcoming") or overdue, (
+                f"{item.title!r} derived {item.temporal_state.derived_list} with "
+                f"deadline {item.deadline} -- neither scheduled for today nor overdue"
+            )
 
     def test_today_limit(self, things_db):
         items = reads.get_today(limit=1)

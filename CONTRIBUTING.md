@@ -15,7 +15,7 @@ That's the whole setup. No build step, no code generation, no external services.
 
 - `pip install -e ".[dev]"` installs runtime dependencies (`mcp[cli]`, `things.py`, `pydantic`) plus dev dependencies (`pytest`, `pytest-asyncio`)
 - `pytest` runs the 167-test suite. Expect a clean pass in ~0.5 seconds on a modern Mac
-- Tests run against a fixture SQLite database (`tests/fixtures/things_fixture.sqlite`) — they don't touch your real Things 3 database, so it's safe to run pytest anytime
+- Tests run against a fixture SQLite database built fresh for each test session by `tests/fixtures/create_fixture.py` — they don't touch your real Things 3 database, so it's safe to run pytest anytime
 
 ## Architecture
 
@@ -69,7 +69,25 @@ Most of these are enforced by tests. If you find yourself wanting to bend one, o
 - `tests/test_derivation.py` — Full coverage of the `derive_list` truth table. The derivation logic is the core value of this project; tests here are non-negotiable.
 - `tests/test_models.py` — Pydantic model validation and serialization.
 - `tests/test_reads_unit.py` — Pure-function tests for `reads.py` helpers (mocked `things.py`).
-- `tests/test_reads_integration.py` — Integration tests against `tests/fixtures/things_fixture.sqlite`, a real Things 3 SQLite database with schema version > 21. Tests the full read path including `_item_from_dict` and `derive_list`.
+- `tests/test_reads_integration.py` — Integration tests against a Things 3 SQLite database with schema version > 21, built per session by `tests/fixtures/create_fixture.py`. Tests the full read path including `_item_from_dict` and `derive_list`.
+
+  **The fixture is generated, never committed.** It used to be a checked-in
+  `.sqlite`, and both failure modes it caused have bitten this repo:
+
+  - *It rotted.* Every date the generator writes is relative to generation
+    time, so a stored database ages. `DeadlineTask` is `today + 14 days`, and
+    once that passed, `things.today()` started returning it (things.py's today
+    includes `deadline="past"`), failing `test_today_returns_items` on clean
+    HEAD with nothing in the code changed.
+  - *It drifted.* Columns were added to the file by hand and never to the
+    generator — `TMAreaTag`, `TMTag.shortcut`, three `TMChecklistItem` columns —
+    so the generator could no longer produce a database the suite could run,
+    and nobody found out until someone regenerated. `TMTask.evening` went the
+    other way: a column invented here that Things has never had, matching what
+    `reads.py` wrongly assumed instead of what Things stores (`startBucket`).
+
+  Building it per session makes the generator the only source, so both classes
+  of drift fail immediately instead of lying in wait.
 - `tests/test_writes_mocked.py` — Tests `writes.py` with `subprocess.run` and `things.tasks/.get` mocked. Verifies AppleScript payload construction, URL scheme encoding, write verification, and error paths.
 - `tests/test_server.py` — Async handler tests. Mocks `reads` and `writes` modules, verifies the `@mcp.tool()` wrappers return the right shapes and handle errors correctly.
 - `tests/conftest.py` — Shared fixtures (`THINGSDB` env var, pytest async config).
