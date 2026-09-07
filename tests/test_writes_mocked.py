@@ -1171,3 +1171,85 @@ class TestGuardCoverageOnRelationAndMoveWrites:
         census = json.loads((tmp_path / "census.json").read_text())
         # subject + one blocker counterpart
         assert census["by_source"]["reconcile_completion"] == 2
+
+
+class TestCensusCoverageStamping:
+    """A census that spans an instrumentation change must say so.
+
+    things-mcp#27's real hazard was a clean-looking sample whose older half was
+    blind to paths the question asked about. Widening coverage therefore closes
+    the previous regime instead of absorbing its writes.
+    """
+
+    def test_first_write_stamps_current_coverage(self, tmp_path, monkeypatch):
+        census = tmp_path / "census.json"
+        monkeypatch.setenv("THINGS_MCP_WRITE_CENSUS", str(census))
+
+        writes._record_guarded_write("schedule_item")
+
+        data = json.loads(census.read_text())
+        assert data["coverage"] == sorted(writes.GUARDED_WRITE_TOOLS)
+        assert "regimes" not in data
+
+    def test_widening_coverage_closes_the_previous_regime(
+        self, tmp_path, monkeypatch
+    ):
+        census = tmp_path / "census.json"
+        monkeypatch.setenv("THINGS_MCP_WRITE_CENSUS", str(census))
+        census.write_text(
+            json.dumps(
+                {
+                    "writes": 198,
+                    "first": "2026-08-25T12:37:50-04:00",
+                    "last": "2026-09-06T22:34:35-04:00",
+                    "by_source": {"update_item": 94, "schedule_item": 104},
+                    "coverage": ["schedule_item", "update_item"],
+                }
+            )
+        )
+
+        writes._record_guarded_write("move_to_context")
+
+        data = json.loads(census.read_text())
+        assert data["coverage"] == sorted(writes.GUARDED_WRITE_TOOLS)
+        assert len(data["regimes"]) == 1
+        closed = data["regimes"][0]
+        assert closed["coverage"] == ["schedule_item", "update_item"]
+        # The 198 narrow-era writes stay counted, attributed to the narrow regime.
+        assert closed["writes"] == 198
+        assert data["writes"] == 199
+
+    def test_unstamped_census_is_not_absorbed_as_current_coverage(
+        self, tmp_path, monkeypatch
+    ):
+        """The live census predates stamping; its writes must not be relabelled."""
+        census = tmp_path / "census.json"
+        monkeypatch.setenv("THINGS_MCP_WRITE_CENSUS", str(census))
+        census.write_text(
+            json.dumps(
+                {
+                    "writes": 198,
+                    "by_source": {"update_item": 94, "schedule_item": 104},
+                }
+            )
+        )
+
+        writes._record_guarded_write("update_item")
+
+        data = json.loads(census.read_text())
+        assert len(data["regimes"]) == 1
+        assert data["regimes"][0]["writes"] == 198
+        assert "unrecorded" in data["regimes"][0]["coverage"][0]
+
+    def test_repeated_writes_under_one_regime_add_no_history(
+        self, tmp_path, monkeypatch
+    ):
+        census = tmp_path / "census.json"
+        monkeypatch.setenv("THINGS_MCP_WRITE_CENSUS", str(census))
+
+        for _ in range(3):
+            writes._record_guarded_write("link_blocker")
+
+        data = json.loads(census.read_text())
+        assert data["writes"] == 3
+        assert "regimes" not in data

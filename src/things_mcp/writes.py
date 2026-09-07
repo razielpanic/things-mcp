@@ -218,6 +218,31 @@ def _record_guarded_write(source: str) -> None:
         data["last"] = now
         by = data.setdefault("by_source", {})
         by[source] = int(by.get(source, 0)) + 1
+
+        # Which write paths this count covers. Without it a census spanning an
+        # instrumentation change reads as one clean sample when it is really two,
+        # and the older half was blind to paths the question asks about -- the
+        # same undefendable-falsification trap that motivated the counter.
+        # Widening coverage closes the previous regime rather than rewriting it:
+        # the old writes stay counted, and stay honestly labelled.
+        coverage = sorted(GUARDED_WRITE_TOOLS)
+        prior = data.get("coverage")
+        if prior is None and int(data.get("writes", 1)) > 1:
+            # A census that predates coverage tracking. Its writes are real but
+            # their coverage is unrecorded, so they must not be absorbed into
+            # the current regime as though they had been watched the same way.
+            prior = ["(unrecorded — census predates coverage stamping)"]
+        if prior is not None and prior != coverage:
+            regimes = data.setdefault("regimes", [])
+            regimes.append(
+                {
+                    "coverage": prior,
+                    "writes": int(data.get("writes", 1)) - 1,
+                    "until": now,
+                }
+            )
+        data["coverage"] = coverage
+
         p.write_text(json.dumps(data, indent=2), encoding="utf-8")
     except Exception:
         pass
@@ -284,6 +309,17 @@ def _check_unexpected_close(
 # The default is "must be guarded". Adding a write tool without a guard fails
 # tests/test_writes_unit.py::test_every_exposed_write_tool_is_guarded rather
 # than silently shrinking the census.
+GUARDED_WRITE_TOOLS: frozenset[str] = frozenset(
+    {
+        "schedule_item",
+        "update_item",
+        "move_to_context",
+        "link_blocker",
+        "unlink_blocker",
+        "reconcile_completion",
+    }
+)
+
 UNGUARDED_WRITE_TOOLS: dict[str, str] = {
     "create_todo": (
         "Creates the item. There is no prior status, so there is no "

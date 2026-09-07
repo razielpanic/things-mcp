@@ -311,6 +311,18 @@ class TestWriteGuardCoverage:
         writes_src = Path(writes.__file__).read_text(encoding="utf-8")
         return set(re.findall(r'source="([a-z_]+)"', writes_src))
 
+    def test_guarded_constant_matches_the_actual_call_sites(self):
+        """GUARDED_WRITE_TOOLS is stamped into the census, so it must not drift.
+
+        If the constant claimed a path the code does not guard, every census
+        entry would overstate its own coverage -- worse than no stamp at all.
+        """
+        assert set(writes.GUARDED_WRITE_TOOLS) == self._guarded_sources(), (
+            "writes.GUARDED_WRITE_TOOLS disagrees with the source= labels passed "
+            "to _check_unexpected_close. The constant is what the census records "
+            "as its coverage, so a mismatch mislabels the sample."
+        )
+
     def test_every_exposed_write_tool_is_guarded(self):
         exposed = self._exposed_write_tools()
         assert exposed, "found no writes.* calls in server.py -- check the regex"
