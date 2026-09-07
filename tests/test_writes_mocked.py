@@ -1253,3 +1253,137 @@ class TestCensusCoverageStamping:
         data = json.loads(census.read_text())
         assert data["writes"] == 3
         assert "regimes" not in data
+
+
+class TestReopen:
+    """completed=false / canceled=false put a Logbook item back.
+
+    They used to fall through every branch and return "Updated item: ." -- a
+    success message for a call that wrote nothing. Callers worked around it by
+    shelling out to osascript.
+    """
+
+    @staticmethod
+    def _scripts(mock_run):
+        return [
+            (c.kwargs.get("input") or (c.args[0] if c.args else ""))
+            for c in mock_run.call_args_list
+        ]
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_canceled_false_reopens_a_canceled_item(self, mock_run, mock_get):
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.side_effect = [
+            _raw_task(status="canceled"),      # pre-read
+            _raw_task(status="incomplete"),    # post-write verify
+            _raw_task(status="incomplete"),    # temporal_state re-read
+        ]
+
+        result = writes.update_item(uuid=VALID_UUID, canceled=False)
+
+        assert isinstance(result, SuccessResponse), getattr(result, "message", "")
+        assert "reopened" in result.message
+        assert any("set status of theToDo to open" in s for s in self._scripts(mock_run))
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_completed_false_reopens_a_completed_item(self, mock_run, mock_get):
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.side_effect = [
+            _raw_task(status="completed"),
+            _raw_task(status="incomplete"),
+            _raw_task(status="incomplete"),
+        ]
+
+        result = writes.update_item(uuid=VALID_UUID, completed=False)
+
+        assert isinstance(result, SuccessResponse)
+        assert "reopened" in result.message
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_reopening_an_open_item_says_no_op_rather_than_nothing(
+        self, mock_run, mock_get
+    ):
+        """The empty-message failure mode is the thing being fixed."""
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.return_value = _raw_task(status="incomplete")
+
+        result = writes.update_item(uuid=VALID_UUID, completed=False)
+
+        assert isinstance(result, SuccessResponse)
+        assert "no-op" in result.message
+        assert result.message != "Updated item: ."
+        assert not any(
+            "set status of theToDo to open" in s for s in self._scripts(mock_run)
+        )
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_a_reopen_that_does_not_take_is_reported(self, mock_run, mock_get):
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.side_effect = [
+            _raw_task(status="canceled"),
+            _raw_task(status="canceled"),   # still canceled after the write
+            _raw_task(status="canceled"),
+        ]
+
+        result = writes.update_item(uuid=VALID_UUID, canceled=False)
+
+        assert isinstance(result, ErrorResponse)
+        assert result.error == "STATUS_MISMATCH"
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_an_explicit_close_wins_over_a_reopen(self, mock_run, mock_get):
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.side_effect = [
+            _raw_task(status="incomplete"),
+            _raw_task(status="canceled"),
+            _raw_task(status="canceled"),
+        ]
+
+        result = writes.update_item(uuid=VALID_UUID, completed=False, canceled=True)
+
+        assert isinstance(result, SuccessResponse)
+        scripts = self._scripts(mock_run)
+        assert any("set status of theToDo to canceled" in s for s in scripts)
+        assert not any("set status of theToDo to open" in s for s in scripts)
+
+    @patch("things_mcp.writes._log_status_anomaly")
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_a_reopen_is_not_counted_as_a_non_completing_write(
+        self, mock_run, mock_get, mock_log, tmp_path, monkeypatch
+    ):
+        """The census watches writes that do NOT request a status change."""
+        monkeypatch.setenv("THINGS_MCP_WRITE_CENSUS", str(tmp_path / "census.json"))
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.side_effect = [
+            _raw_task(status="completed"),
+            _raw_task(status="incomplete"),
+            _raw_task(status="incomplete"),
+        ]
+
+        writes.update_item(uuid=VALID_UUID, completed=False)
+
+        assert not (tmp_path / "census.json").exists()
+        mock_log.assert_not_called()
+
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_reopen_combines_with_other_field_updates(self, mock_run, mock_get):
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.side_effect = [
+            _raw_task(status="completed"),
+            _raw_task(status="incomplete"),
+            _raw_task(status="incomplete"),
+        ]
+
+        result = writes.update_item(
+            uuid=VALID_UUID, completed=False, title="Back from the dead"
+        )
+
+        assert isinstance(result, SuccessResponse)
+        assert "title" in result.message and "reopened" in result.message

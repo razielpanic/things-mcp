@@ -467,9 +467,13 @@ async def update_item(
             the item is ``gated`` (see link_blocker), include ``gated`` here or
             it is dropped -- re-run link_blocker afterward if you clobber it.
         completed: Set to true to mark complete. Status -> completed, item
-            moves to Logbook (overrides temporal placement).
+            moves to Logbook (overrides temporal placement). Set to FALSE to
+            reopen a completed or canceled item -- status -> incomplete, item
+            leaves the Logbook and returns to its temporal placement.
         canceled: Set to true to cancel. Status -> canceled, item moves to
-            Logbook (overrides temporal placement).
+            Logbook (overrides temporal placement). Set to FALSE to reopen,
+            same as completed=false. If you pass a true and a false together,
+            the close wins.
         project_uuid: File the item into this project (structural move, same
             as move_to_context). Provide at most one of project_uuid/area_uuid.
         area_uuid: File the item into this area (structural move).

@@ -1168,11 +1168,28 @@ def update_item(
     apply_completed = completed is True and pre_status != "completed"
     apply_canceled = canceled is True and pre_status != "canceled"
 
+    # completed=False / canceled=False mean "put it back", the inverse of the
+    # True case. They used to fall through every branch here and produce
+    # "Updated item: ." -- a success message for a call that wrote nothing,
+    # which is the worst possible answer: the caller has no way to tell it from
+    # a real update. Callers were driving raw osascript to reopen tasks instead.
+    #
+    # A close request wins over a reopen request, so completed=False with
+    # canceled=True still cancels; the explicit close is the more specific
+    # instruction.
+    reopen_requested = (completed is False or canceled is False) and not (
+        completed is True or canceled is True
+    )
+    apply_reopen = reopen_requested and pre_status in ("completed", "canceled")
+
     if apply_completed:
         script_lines.append("set status of theToDo to completed")
 
     if apply_canceled:
         script_lines.append("set status of theToDo to canceled")
+
+    if apply_reopen:
+        script_lines.append("set status of theToDo to open")
 
     # Handle deadline: date string sets it, empty string clears it
     if deadline is not None:
@@ -1256,6 +1273,12 @@ end tell
             if apply_canceled
             else "canceled (no-op — item was already canceled)"
         )
+    if reopen_requested:
+        parts.append(
+            "reopened"
+            if apply_reopen
+            else "reopened (no-op — item was already open)"
+        )
     if project_uuid is not None:
         parts.append("project")
     if area_uuid is not None:
@@ -1265,7 +1288,7 @@ end tell
     # never silently complete or cancel an open item. If it did, reopen and
     # report rather than logbooking an active task.
     post_status = raw.get("status") if isinstance(raw, dict) else None
-    if completed is not True and canceled is not True:
+    if completed is not True and canceled is not True and not apply_reopen:
         guard = _check_unexpected_close(
             uuid, pre_status, post_status, source="update_item"
         )
@@ -1290,6 +1313,15 @@ end tell
                 f"Requested canceled=true but the item's status is "
                 f"{post_status!r} after the write. Re-check the item in Things; "
                 "other requested field changes may have applied."
+            ),
+        )
+    if apply_reopen and post_status != "incomplete":
+        return ErrorResponse(
+            error="STATUS_MISMATCH",
+            message=(
+                f"Requested a reopen but the item's status is {post_status!r} "
+                "after the write. Re-check the item in Things; other requested "
+                "field changes may have applied."
             ),
         )
 
