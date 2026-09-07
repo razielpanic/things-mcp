@@ -28,6 +28,7 @@ from typing import Optional
 
 import things
 
+from things_mcp import evening as evening_reader
 from things_mcp.derivation import derive_list
 from things_mcp.models import ErrorResponse, SuccessResponse, TemporalState
 
@@ -132,7 +133,9 @@ def _read_temporal_state(uuid: str) -> TemporalState | None:
     start_date_str = raw.get("start_date")
     start_date = date.fromisoformat(start_date_str[:10]) if start_date_str else None
     status = raw.get("status", "incomplete")
-    evening = bool(raw.get("evening", False))
+    # From the database, not from raw -- things.py carries no evening key, so
+    # the old raw.get("evening", False) was a constant False. See evening.py.
+    evening = evening_reader.is_evening(uuid)
 
     return TemporalState(
         start=start,

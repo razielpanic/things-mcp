@@ -103,7 +103,12 @@ class TemporalState(BaseModel):
     start_date: Optional[date] = None
     derived_list: DerivedList
     status: ItemStatus = ItemStatus.INCOMPLETE
-    evening: bool = False
+    # None means "could not be read", which is deliberately not False. This
+    # field was a hardcoded False for its whole history (see evening.py), and
+    # three dev issues were filed against writes that had actually landed. A
+    # falsy-but-honest null tells a caller that verification is unavailable;
+    # False tells it the item is not in the evening.
+    evening: Optional[bool] = False
 
 
 class ItemContext(BaseModel):

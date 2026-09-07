@@ -15,6 +15,7 @@ from typing import Optional
 
 import things
 
+from things_mcp import evening as evening_reader
 from things_mcp.derivation import derive_list
 from things_mcp.models import AreaItem, ChecklistItem, ItemContext, TemporalState, ThingsItem
 
@@ -33,12 +34,37 @@ def _parse_datetime(val: str | None) -> datetime | None:
     return datetime.fromisoformat(val)
 
 
-def _item_from_dict(raw: dict, *, truncate_notes: bool = True) -> ThingsItem:
+def _items_from_dicts(
+    raw_items: list[dict], *, truncate_notes: bool = True
+) -> list[ThingsItem]:
+    """Map a list of things.py dicts, reading every evening flag in one query.
+
+    Batched because the evening flag comes from the database rather than from
+    the item dict (things.py does not expose it -- see evening.py), and a list
+    view should not pay one round trip per row for it.
+    """
+    flags = evening_reader.evening_flags(
+        [r["uuid"] for r in raw_items if r.get("uuid")]
+    )
+    return [
+        _item_from_dict(r, truncate_notes=truncate_notes, evening=flags.get(r.get("uuid")))
+        for r in raw_items
+    ]
+
+
+_UNSET = object()
+
+
+def _item_from_dict(
+    raw: dict, *, truncate_notes: bool = True, evening: bool | None = _UNSET
+) -> ThingsItem:
     """Map a things.py dict to ThingsItem with nested TemporalState and ItemContext.
 
     Args:
         raw: Dict returned by things.py query functions.
         truncate_notes: If True, truncate notes to 200 chars (for list views).
+        evening: Pre-fetched evening flag. Omit to look it up for this item;
+            pass one from evening_flags() when mapping a list.
     """
     # Validate required fields — raise ValueError instead of KeyError
     uuid = raw.get("uuid")
@@ -55,8 +81,10 @@ def _item_from_dict(raw: dict, *, truncate_notes: bool = True) -> ThingsItem:
     start_date = _parse_date(raw.get("start_date"))
     status = raw.get("status", "incomplete")
 
-    # Evening detection: things.py may include an evening flag
-    evening = bool(raw.get("evening", False))
+    # things.py has no evening flag to include -- it comes from the database
+    # directly. None where it cannot be read, never False. See evening.py.
+    if evening is _UNSET:
+        evening = evening_reader.is_evening(uuid)
 
     notes = raw.get("notes")
     if truncate_notes and notes and len(notes) > 200:
@@ -112,7 +140,7 @@ def get_inbox(*, limit: int = 50) -> list[ThingsItem]:
     been triaged into Anytime/Someday yet.
     """
     raw_items = things.inbox()[:limit]
-    return [_item_from_dict(r) for r in raw_items]
+    return _items_from_dicts(raw_items)
 
 
 def get_today(*, limit: int = 50) -> list[ThingsItem]:
@@ -122,7 +150,7 @@ def get_today(*, limit: int = 50) -> list[ThingsItem]:
     regular today tasks, unconfirmed scheduled tasks, and overdue deadline tasks.
     """
     raw_items = things.today()[:limit]
-    return [_item_from_dict(r) for r in raw_items]
+    return _items_from_dicts(raw_items)
 
 
 def get_upcoming(*, limit: int = 50, days_ahead: int = 30) -> list[ThingsItem]:
@@ -132,7 +160,7 @@ def get_upcoming(*, limit: int = 50, days_ahead: int = 30) -> list[ThingsItem]:
     Today when their start_date arrives.
     """
     raw_items = things.upcoming()[:limit]
-    return [_item_from_dict(r) for r in raw_items]
+    return _items_from_dicts(raw_items)
 
 
 def get_anytime(*, limit: int = 50) -> list[ThingsItem]:
@@ -143,7 +171,7 @@ def get_anytime(*, limit: int = 50) -> list[ThingsItem]:
     "available for work whenever."
     """
     raw_items = things.anytime(start_date=False)[:limit]
-    return [_item_from_dict(r) for r in raw_items]
+    return _items_from_dicts(raw_items)
 
 
 def get_someday(*, limit: int = 50) -> list[ThingsItem]:
@@ -153,7 +181,7 @@ def get_someday(*, limit: int = 50) -> list[ThingsItem]:
     Someday means "not now, maybe later."
     """
     raw_items = things.someday()[:limit]
-    return [_item_from_dict(r) for r in raw_items]
+    return _items_from_dicts(raw_items)
 
 
 def get_logbook(*, limit: int = 50, period: str = "7d") -> list[ThingsItem]:
@@ -163,7 +191,7 @@ def get_logbook(*, limit: int = 50, period: str = "7d") -> list[ThingsItem]:
     regardless of start flag or start_date.
     """
     raw_items = things.logbook(last=period)[:limit]
-    return [_item_from_dict(r) for r in raw_items]
+    return _items_from_dicts(raw_items)
 
 
 def get_item(*, uuid: str) -> Optional[ThingsItem]:
@@ -195,7 +223,7 @@ def get_item(*, uuid: str) -> Optional[ThingsItem]:
     # project UUID to avoid the upstream things.py include_items bug.
     if item.type == "project":
         raw_children = things.tasks(project=uuid)
-        item.items = [_item_from_dict(r, truncate_notes=False) for r in raw_children]
+        item.items = _items_from_dicts(raw_children, truncate_notes=False)
 
     return item
 
@@ -229,7 +257,7 @@ def search(
     if include_completed:
         kwargs["status"] = None  # None = any status in things.py
     raw_items = things.tasks(search_query=query, **kwargs)[:limit]
-    return [_item_from_dict(r) for r in raw_items]
+    return _items_from_dicts(raw_items)
 
 
 def get_projects(*, include_items: bool = False) -> list[ThingsItem]:
@@ -240,11 +268,11 @@ def get_projects(*, include_items: bool = False) -> list[ThingsItem]:
     (queried separately by project UUID to avoid the upstream empty bug).
     """
     raw_projects = things.projects()
-    projects = [_item_from_dict(r) for r in raw_projects]
+    projects = _items_from_dicts(raw_projects)
     if include_items:
         for proj in projects:
             raw_children = things.tasks(project=proj.uuid)
-            proj.items = [_item_from_dict(r) for r in raw_children]
+            proj.items = _items_from_dicts(raw_children)
     return projects
 
 
@@ -271,5 +299,5 @@ def get_areas(*, include_items: bool = False) -> list[AreaItem]:
     if include_items:
         for area in areas:
             raw_children = things.tasks(area=area.uuid)
-            area.items = [_item_from_dict(r) for r in raw_children]
+            area.items = _items_from_dicts(raw_children)
     return areas

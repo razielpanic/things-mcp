@@ -11,6 +11,7 @@ from datetime import date, datetime
 import pytest
 
 from things_mcp.models import ChecklistItem, DerivedList, StartFlag, ThingsItem
+from things_mcp import evening as evening_reader
 from things_mcp.reads import _item_from_dict, _parse_date, _parse_datetime
 
 
@@ -128,20 +129,57 @@ class TestItemFromDict:
         assert item.temporal_state.start == "Someday"
         assert item.temporal_state.derived_list == "Someday"
 
-    def test_evening_flag_true(self, sample_raw_dict: dict):
+    # The evening flag comes from the database, not from the item dict.
+    #
+    # The tests these replaced set raw["evening"] and asserted it round-tripped.
+    # things.py never emits that key, so they exercised a value no production
+    # read could produce -- green tests over a field that was a constant False
+    # in every real call, through three dev-issue filings. A fixture that can
+    # supply an input the real source cannot is not testing the read path.
+
+    def test_evening_ignores_a_key_things_py_would_never_emit(
+        self, sample_raw_dict: dict, monkeypatch
+    ):
         sample_raw_dict["evening"] = 1
+        monkeypatch.setattr(evening_reader, "is_evening", lambda uuid: False)
+        item = _item_from_dict(sample_raw_dict)
+        assert item.temporal_state.evening is False
+
+    def test_evening_true_comes_from_the_database(
+        self, sample_raw_dict: dict, monkeypatch
+    ):
+        monkeypatch.setattr(evening_reader, "is_evening", lambda uuid: True)
         item = _item_from_dict(sample_raw_dict)
         assert item.temporal_state.evening is True
 
-    def test_evening_flag_false(self, sample_raw_dict: dict):
-        sample_raw_dict["evening"] = 0
+    def test_evening_false_comes_from_the_database(
+        self, sample_raw_dict: dict, monkeypatch
+    ):
+        monkeypatch.setattr(evening_reader, "is_evening", lambda uuid: False)
         item = _item_from_dict(sample_raw_dict)
         assert item.temporal_state.evening is False
 
-    def test_evening_flag_missing(self):
-        raw = {"uuid": "F" * 22, "title": "No evening", "type": "to-do"}
-        item = _item_from_dict(raw)
-        assert item.temporal_state.evening is False
+    def test_unreadable_evening_is_none_not_false(
+        self, sample_raw_dict: dict, monkeypatch
+    ):
+        """The whole point of the fix: unknown must not read as "not evening".
+
+        A False here is the original bug -- a value indistinguishable from a
+        real answer, which is what sent three reports at the write path.
+        """
+        monkeypatch.setattr(evening_reader, "is_evening", lambda uuid: None)
+        item = _item_from_dict(sample_raw_dict)
+        assert item.temporal_state.evening is None
+
+    def test_prefetched_flag_is_used_without_a_lookup(
+        self, sample_raw_dict: dict, monkeypatch
+    ):
+        def _boom(uuid):
+            raise AssertionError("should not query per-item when a flag is given")
+
+        monkeypatch.setattr(evening_reader, "is_evening", _boom)
+        item = _item_from_dict(sample_raw_dict, evening=True)
+        assert item.temporal_state.evening is True
 
     def test_project_type(self, sample_raw_dict: dict):
         sample_raw_dict["type"] = "project"

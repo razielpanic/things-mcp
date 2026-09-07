@@ -200,6 +200,12 @@ async def get_item(uuid: str) -> dict:
     checklist items, and all metadata. The temporal_state block shows all
     derivation inputs (start, start_date, derived_list, status, evening) so
     you can understand why the item is in its current computed view.
+
+    ``evening`` is true/false when it could be read, and **null when it could
+    not**. Null is not "no": treat it as verification unavailable rather than
+    as evidence that an evening write failed. (Before 2026-09-07 this field was
+    false for every item ever returned, which is what made three reports of
+    "when=evening doesn't take" look real.)
     """
     try:
         item = reads.get_item(uuid=uuid)
