@@ -273,3 +273,67 @@ class TestErrorHandling:
         mock_fn.side_effect = RuntimeError("Things 3 is not responding")
         result = await delete_item(uuid="A" * 22)
         assert result["error"] == "WRITE_ERROR"
+
+
+class TestUnknownArgumentsAreRejected:
+    """A tool must not accept an argument it does not declare.
+
+    FastMCP's default is pydantic `extra="ignore"`, so an undeclared argument is
+    dropped and the call succeeds anyway -- reporting success for work it did
+    not do. `create_todo(title=..., list_title="Today")` did exactly that:
+    success, a real uuid, and the item filed in Inbox. That is the 2026-04-21
+    report, which lived for months as a "list_title silently fails" rule that
+    only worked when someone remembered it.
+    """
+
+    def test_every_tool_forbids_extras(self):
+        from things_mcp import server
+
+        hardened = server.forbid_unknown_arguments()
+        assert hardened, "no tools found to harden"
+        for name in hardened:
+            tool = server.mcp._tool_manager._tools[name]
+            assert tool.fn_metadata.arg_model.model_config.get("extra") == "forbid", (
+                f"{name} still ignores undeclared arguments"
+            )
+            assert tool.parameters.get("additionalProperties") is False, (
+                f"{name} publishes a schema that permits undeclared arguments"
+            )
+
+    def test_hardening_is_applied_at_import(self):
+        """Not just available -- actually on, without anyone calling it."""
+        from things_mcp import server
+
+        tool = server.mcp._tool_manager._tools["create_todo"]
+        assert tool.parameters.get("additionalProperties") is False
+
+    async def test_list_title_is_rejected_instead_of_dropped(self):
+        """The original repro. It must fail before any write happens."""
+        from mcp.server.fastmcp.exceptions import ToolError
+
+        from things_mcp import server
+
+        with pytest.raises(ToolError) as exc:
+            await server.mcp.call_tool(
+                "create_todo", {"title": "should never be created", "list_title": "Today"}
+            )
+        assert "list_title" in str(exc.value)
+        assert "not permitted" in str(exc.value).lower()
+
+    async def test_a_misspelled_argument_is_named_in_the_error(self):
+        from mcp.server.fastmcp.exceptions import ToolError
+
+        from things_mcp import server
+
+        with pytest.raises(ToolError) as exc:
+            await server.mcp.call_tool(
+                "update_item", {"uuid": "A" * 22, "projct_uuid": "B" * 22}
+            )
+        assert "projct_uuid" in str(exc.value)
+
+    async def test_declared_arguments_still_work(self):
+        """Strictness must not break the normal call path."""
+        from things_mcp import server
+
+        result = await server.mcp.call_tool("get_item", {"uuid": "Z" * 22})
+        assert result is not None

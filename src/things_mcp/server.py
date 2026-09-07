@@ -656,6 +656,49 @@ async def reconcile_completion(uuid: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Argument strictness
+# ---------------------------------------------------------------------------
+
+
+def forbid_unknown_arguments(server: FastMCP = None) -> list[str]:
+    """Make every tool reject arguments it does not declare.
+
+    FastMCP builds each tool's argument model with pydantic's default
+    ``extra="ignore"``, so an argument the tool never declared is dropped and
+    the call proceeds as though it had not been passed. The tool then reports
+    success for work it did not do.
+
+    That is not hypothetical here. ``create_todo(title=..., list_title="Today")``
+    returned ``success: true`` with a real uuid and filed the item in Inbox --
+    the exact symptom in the 2026-04-21 report, which had been carried as a
+    standing "list_title silently fails" workaround rule for months. The
+    parameter does not exist and never has; the schema said so and nothing
+    enforced it. A caller cannot distinguish a dropped argument from an honoured
+    one, and the workaround rule only protects whoever remembers to read it.
+
+    So: forbid extras on the argument models, and publish
+    ``additionalProperties: false`` so clients see the same contract the server
+    now enforces. A misspelled or obsolete argument becomes a validation error
+    before the tool body runs -- no write happens, and the message names the
+    offending argument.
+
+    Returns the tool names it hardened, so a test can assert none were missed.
+    """
+    server = server or mcp
+    hardened: list[str] = []
+    for name, tool in server._tool_manager._tools.items():
+        arg_model = tool.fn_metadata.arg_model
+        arg_model.model_config["extra"] = "forbid"
+        arg_model.model_rebuild(force=True)
+        tool.parameters = arg_model.model_json_schema(by_alias=True)
+        hardened.append(name)
+    return hardened
+
+
+forbid_unknown_arguments()
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
