@@ -33,6 +33,9 @@ Once installed, you just talk to Claude normally:
 > **You:** "Submit grant report" is blocked by "Get board signoffs" — link them.
 > **Claude:** *(calls `link_blocker`)* Done. "Submit grant report" now carries a `gated` tag and a "Gated by" link to "Get board signoffs," with a reciprocal "Gates" link on the blocker. Mark either one done and I'll clear the link.
 
+> **You:** I checked off "Send the invoice" but I never actually sent it.
+> **Claude:** *(calls `update_item` with `completed=false`)* Reopened — "Send the invoice" is back out of the Logbook and in Anytime.
+
 Claude handles the tool-calling automatically — you don't need to know or care about the tool names. But if you're curious, there's a [full tool reference](docs/tools.md).
 
 ## Install

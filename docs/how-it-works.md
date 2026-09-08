@@ -73,6 +73,31 @@ If you try to "move an item to Today" by setting its Area or Project, nothing ha
 
 This MCP keeps those two operations strictly separate. Claude can call either one, but it never conflates them.
 
+## The read path: things.py, plus one deliberate exception
+
+Reads go through [things.py](https://github.com/thingsapi/things.py), which
+queries the Things SQLite database directly. It is fast (<10ms) and it owns the
+schema knowledge, which is the point — Things' schema is undocumented and
+changes between versions.
+
+**One field bypasses it: the evening flag.** things.py's `SELECT` does not
+include `TMTask.startBucket`, the column Things uses to place an item in Today's
+"This Evening" section, and it exposes no equivalent. So `evening.py` opens its
+own read-only connection for that one column.
+
+That exception cost three bug reports before it was found. The original code did
+`bool(raw.get("evening", False))` against a dict that has never had an `evening`
+key, so the field was the constant `False` for its entire life — and three
+filings blamed the *write* path for evening scheduling "not taking" when the
+writes had landed correctly the whole time.
+
+Two rules came out of it, and they generalise past this field:
+
+- **Resolve the database path through things.py**, never rebuild it. Otherwise
+  the item dict and the extra column can come from two different files.
+- **Unknown is `null`, never `False`.** A default that looks like an answer is
+  worse than no answer, because nothing distinguishes it from one.
+
 ## The write path: AppleScript first, URL scheme as a last resort
 
 Things 3 offers two ways to mutate data:

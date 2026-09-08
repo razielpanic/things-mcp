@@ -4,6 +4,18 @@
 
 Every read response includes a `derived_list` field on each item showing the real list the item is in (Today, Upcoming, Anytime, Someday, Inbox, or Logbook). See [how-it-works.md](how-it-works.md) for why this matters.
 
+## Every tool rejects arguments it does not declare
+
+Passing a parameter a tool doesn't have is a validation error, not a silent
+drop. You get a message naming the offending argument and **nothing is
+written** — the check runs before the tool body.
+
+This changed in 0.3.0. Before that, an undeclared argument was discarded and the
+call proceeded as if it had never been passed, so the tool reported success for
+work it hadn't done. A misspelling like `projct_uuid` became a silently partial
+write, and a parameter that never existed (`list_title`) filed items to the
+Inbox while returning `success: true` with a real uuid.
+
 ## Read tools
 
 ### `get_inbox`
@@ -76,6 +88,16 @@ Returns all areas (the top-level structural containers above projects). Areas ha
 **Args:** `include_items` (default false) — when true, each area includes its child projects and todos
 **Returns:** `{view: "Areas", description, items: [...], count}` where `items` are `AreaItem`s (distinct from `ThingsItem`)
 
+### A note on `temporal_state.evening`
+
+`true` / `false` when it could be read, and **`null` when it could not**. Null
+is not "no" — treat it as verification unavailable, never as evidence that an
+evening write failed.
+
+Before 0.3.0 this field was `false` for every item ever returned: it was read
+from a key `things.py` does not emit, so the value was a constant rather than an
+observation. It now comes from `TMTask.startBucket` in the database directly.
+
 ## Write tools
 
 ### `create_todo`
@@ -103,6 +125,7 @@ The core temporal operation: change which computed view an item appears in. Maps
 - `"today"` → `start_date = today` → item appears in **Today**
 - `"tomorrow"` → `start_date = tomorrow` → item appears in **Upcoming** (auto-promotes to Today when the date rolls over)
 - `"evening"` → `start_date = today` + evening flag → item appears in **Today** with evening grouping
+  (this is the one `when` value that rides the `things:///` URL scheme, so it briefly foregrounds Things)
 - `"YYYY-MM-DD"` → `start_date = that date` → Today or Upcoming depending on the date
 - `"anytime"` → clears `start_date`, sets `start = Anytime` → item appears in **Anytime** (**CRITICAL: not Someday**)
 - `"someday"` → clears `start_date`, sets `start = Someday` → item appears in **Someday**
@@ -118,6 +141,10 @@ Updates fields on an existing item: title, notes, tags, scheduling (`when`), dea
 
 **Args:** `uuid` (required), `title`, `notes`, `when`, `deadline` (or `""` to clear), `tags` (comma-separated), `completed` (bool), `canceled` (bool), `project_uuid`, `area_uuid`
 **Returns:** `SuccessResponse` or `ErrorResponse`
+
+**`completed` / `canceled` take `false` as well as `true`.** `true` closes the item; **`false` reopens it** — status goes back to `incomplete`, the item leaves the Logbook and returns to its temporal placement. Each flag only acts on the status it names: `completed=false` un-completes, `canceled=false` un-cancels, and a mismatched flag is a reported no-op rather than a surprise. If you pass a `true` and a `false` together, the close wins.
+
+Both are idempotent. Closing an already-closed item, or reopening an already-open one, writes nothing and says so in the response message rather than returning an empty change list.
 
 **Replaces wholesale — caution with gated tasks:** `tags` and `notes` each *replace* the item's entire tag set / notes body; they don't merge. If the item was wired with `link_blocker`, updating its `tags` drops the `gated` tag and updating its `notes` wipes the `Gated by:` / `Gates:` blocks. Read the current value, splice your change in, and write it all back — or re-run `link_blocker` afterward. Uses AppleScript; no auth token needed.
 
