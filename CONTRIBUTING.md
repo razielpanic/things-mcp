@@ -122,3 +122,49 @@ For structural refactors, test infrastructure, and error-handling hardening, QA 
 ## License
 
 MIT, same as the project. Contributions are licensed under the same terms.
+
+## Releasing
+
+**What a release is here.** This server is loaded from source over `PYTHONPATH`
+(see [docs/setup.md](docs/setup.md)) — there is no install step and no package
+index. The version number therefore gates nothing at runtime. It is a bookmark:
+a way to say "this batch of changes is one coherent thing" and to give the
+CHANGELOG somewhere to hang. Treat it as documentation, not distribution.
+
+**When to cut one.** When a batch would be hard to describe in one line, or when
+behaviour changed in a way that would surprise someone reading the code later
+without the conversation that produced it. A pile of internal refactors doesn't
+need one. A new parameter, a changed default, or anything that can reject a call
+that used to work does.
+
+**Versioning.** [SemVer](https://semver.org/), pre-1.0 — so a **breaking change
+bumps the minor**, not the major. "Breaking" means observable behaviour a caller
+could depend on, even if the old behaviour was a bug. 0.3.0 bumped the minor for
+rejecting undeclared arguments: those calls were never really succeeding, but
+they used to return success, and that is what a caller saw.
+
+**The mechanics** — one commit, exactly three files:
+
+```
+CHANGELOG.md               new section at the top
+pyproject.toml             version = "X.Y.Z"
+src/things_mcp/__init__.py __version__ = "X.Y.Z"
+```
+
+Commit it as `chore(release): X.Y.Z` with a message saying *why this version
+number* — especially why minor rather than patch. Then tag it:
+
+```bash
+git tag -a vX.Y.Z -m "X.Y.Z — one-line summary"
+```
+
+Tag every release. 0.2.0 went untagged for two months while the CHANGELOG
+claimed SemVer adherence, which left no way to check out a version; it was
+tagged retroactively on 2026-09-07.
+
+Documentation is **not** part of the release commit. Update `docs/tools.md`
+(it enumerates parameters, so it goes stale first), `docs/how-it-works.md` for
+anything architectural, and the README if a user-visible capability appeared —
+then commit those separately, before the release. The release commit should be
+readable as a pure version bump.
+
