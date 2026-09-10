@@ -176,7 +176,9 @@ async def get_logbook(limit: int = 50, period: str = "7d") -> dict:
 
     Args:
         limit: Max items to return.
-        period: How far back to look (e.g. "7d", "30d", "1y").
+        period: How far back to look, by COMPLETION date, in calendar days
+            local time: "7d" is the last seven days plus today, "1d" is
+            yesterday and today, "0d" is today only. Units: d, w, y.
     """
     try:
         items = reads.get_logbook(limit=limit, period=period)
@@ -236,8 +238,10 @@ async def search(
 ) -> dict:
     """Search items by text with optional structured filters.
 
-    Searches titles and notes. Active items only by default --
-    set include_completed=True for all statuses.
+    Searches titles, notes, and checklist-row titles: a to-do whose only
+    match is inside its checklist is returned with that checklist
+    populated. Active items only by default -- set include_completed=True
+    for all statuses.
 
     Filter by organizational context (project UUID, area UUID, tag name)
     or temporal fields (start_date, deadline). Date filters accept:

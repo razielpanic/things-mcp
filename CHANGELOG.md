@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **List views carry checklist rows.** `get_today`, `get_upcoming`,
+  `get_anytime`, `get_someday`, `get_inbox`, `get_logbook` and `search`
+  reported `checklist: []` for every item, while `get_item` on the same uuid
+  showed the rows. A list-view row from things.py carries only the
+  `TMTask.checklist` 0/1 flag, which the mapper treated as "no checklist".
+  Flagged items are now resolved in one batched query per list. (#29)
+- **`search` matches checklist-row text.** things.py's search covers title,
+  notes and area title; a to-do whose only match was inside a checklist row
+  was invisible. Such parents are now found through the checklist table and
+  returned through the same filters. (#29)
+- **`get_logbook(period=…)` filters by completion date.** It passed `period`
+  through as things.py's `last=`, which limits by *creation* date, so
+  `period="1d"` returned only items both created and completed within a day
+  and an item finished this morning but created last month was missing. The
+  period is now a calendar-day window on the completion date: `"1d"` is
+  yesterday and today, `"0d"` is today only. (#24)
+
 ## [0.3.0] - 2026-09-07
 
 ### Added
