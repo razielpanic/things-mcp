@@ -216,7 +216,7 @@ def seed_data(conn: sqlite3.Connection) -> None:
         # Created a month ago, completed just now. things-mcp#24: the logbook
         # period must reach this by completion date, not creation date.
         (
-            "OldCompletedTask0000001", 0, "Call GI for followup", 3, 1,
+            "OldCompletedTask0000001", 0, "Return the library books", 3, 1,
             None, None, None,
             None, None, None, 0, 10, 0,
             unix_timestamp(now - timedelta(days=30)), modified_ts,
@@ -226,7 +226,7 @@ def seed_data(conn: sqlite3.Connection) -> None:
         # things-mcp#29: list views must show the rows, and search must find
         # the parent by a row's text.
         (
-            "ChecklistTask0000000001", 0, "Execute Sanctuary PA setup", 0, 1,
+            "ChecklistTask0000000001", 0, "Run the sound check", 0, 1,
             None, None, "Run the sequence top to bottom",
             None, None, None, 0, 11, 0, created_ts, modified_ts, None, 0,
         ),
@@ -275,7 +275,7 @@ def seed_data(conn: sqlite3.Connection) -> None:
         [
             ("CL000000000000000000001", "TodayTask00000000000001", "Check tests", 0, 0),
             ("CL000000000000000000002", "TodayTask00000000000001", "Review docs", 3, 1),
-            ("CL000000000000000000003", "ChecklistTask0000000001", "If Lisa: test pad adapter", 0, 0),
+            ("CL000000000000000000003", "ChecklistTask0000000001", "If the drummer comes: test the pad adapter", 0, 0),
             ("CL000000000000000000004", "ChecklistTask0000000001", "Ring out the mains", 2, 1),
         ],
     )

@@ -52,7 +52,7 @@ class TestListViewsCarryChecklist:
     def test_anytime_has_rows(self, things_db):
         item = next(i for i in reads.get_anytime() if i.uuid == "ChecklistTask0000000001")
         assert [c.title for c in item.checklist] == [
-            "If Lisa: test pad adapter",
+            "If the drummer comes: test the pad adapter",
             "Ring out the mains",
         ]
 
@@ -94,11 +94,11 @@ class TestLogbookPeriod:
 
     def test_1d_includes_item_completed_today_created_last_month(self, things_db):
         titles = [i.title for i in reads.get_logbook(period="1d")]
-        assert "Call GI for followup" in titles
+        assert "Return the library books" in titles
 
     def test_0d_is_today_only(self, things_db):
         titles = [i.title for i in reads.get_logbook(period="0d")]
-        assert "Call GI for followup" in titles
+        assert "Return the library books" in titles
         assert "Ship v1.0" in titles
 
     def test_cutoff_arithmetic(self):
