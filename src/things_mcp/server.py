@@ -14,6 +14,8 @@ Write path: AppleScript (scheduling/moves) + URL scheme (checklists)
 
 from __future__ import annotations
 
+import os
+import re
 import sqlite3
 from typing import Optional
 
@@ -319,6 +321,56 @@ async def get_areas(include_items: bool = False) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Notes shape warning (opt-in)
+# ---------------------------------------------------------------------------
+
+# A Things note works as a launchpad: the next action and pointers. Agents
+# drift toward pasting findings and history into it, where it buries the action
+# and dies with the task. The docstrings say so at the moment of the write; this
+# adds a warning to the write's response when a deployment opts in by setting
+# the line limit. It never rejects: link_blocker blocks and numbered steps are
+# legitimately multi-line, and blocker blocks don't count toward the limit.
+NOTES_WARN_ENV = "THINGS_MCP_NOTES_WARN_LINES"
+_BLOCKER_LINE = re.compile(r"^(Gated by:|Gates:|things:///show\?id=)")
+_MARKDOWN = re.compile(r"\[[^\]]+\]\([^)]+\)|\*\*[^*]+\*\*|^#{1,6} ", re.MULTILINE)
+
+
+def _notes_warning(notes: Optional[str]) -> Optional[str]:
+    raw = os.environ.get(NOTES_WARN_ENV, "").strip()
+    if not notes or not raw:
+        return None
+    try:
+        limit = int(raw)
+    except ValueError:
+        return None
+    if limit <= 0:
+        return None
+    problems = []
+    lines = [
+        line for line in notes.splitlines()
+        if line.strip() and not _BLOCKER_LINE.match(line.strip())
+    ]
+    if len(lines) > limit:
+        problems.append(f"{len(lines)} lines (limit {limit})")
+    if _MARKDOWN.search(notes):
+        problems.append("Markdown, which Things shows literally")
+    if not problems:
+        return None
+    return (
+        "notes has " + " and ".join(problems) + ". A Things note is a launchpad: "
+        "the next action and pointers. Move the rest to the canonical doc and "
+        "link it, or rewrite the note."
+    )
+
+
+def _with_notes_warning(result: dict, notes: Optional[str]) -> dict:
+    warning = _notes_warning(notes)
+    if warning and result.get("success"):
+        result["notes_warning"] = warning
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Write Tools (9)
 # ---------------------------------------------------------------------------
 
@@ -347,8 +399,11 @@ async def create_todo(
             status, and history do NOT belong here -- they have dedicated fields
             (deadline, when, project_uuid, area_uuid, tags) or go in notes. Things
             is schema-structured by design; keep the title bare.
-        notes: Body text / markdown notes. Put description, context, links, and
-            any multi-line detail here -- everything that is not the one action.
+        notes: A launchpad, not a document: short plain-text lines saying what
+            to do, in what order, plus pointers (file paths, deep links). Things
+            shows Markdown literally, so no ``[label](url)`` or ``**bold**``.
+            Rationale, findings, and history belong in the canonical doc the
+            user reads; put its path or link here instead of its contents.
         when: Scheduling -- "today", "tomorrow", "evening", "anytime",
             "someday", or "YYYY-MM-DD". None = Inbox (default).
         deadline: Due date as "YYYY-MM-DD". Adds visual pressure but does
@@ -377,7 +432,7 @@ async def create_todo(
             area_uuid=area_uuid,
             heading=heading,
         )
-        return result.model_dump()
+        return _with_notes_warning(result.model_dump(), notes)
     except sqlite3.OperationalError:
         return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
     except Exception as e:
@@ -410,7 +465,10 @@ async def create_project(
         title: A bare noun phrase naming the project ("Server Migration",
             "HHD 2026 Prep") -- no dates, separators, or metadata; those go in
             dedicated fields or notes.
-        notes: Project notes -- description, scope, links, multi-line detail.
+        notes: A launchpad, not a document: a line of scope plus pointers (file
+            paths, deep links) to where the project's prose lives. Plain text --
+            Things shows Markdown literally. Rationale, decisions, and history
+            belong in that canonical doc, linked here, not copied.
         when: Scheduling -- "anytime", "someday", or "YYYY-MM-DD". Never
             use "today" for projects.
         deadline: Project deadline.
@@ -430,7 +488,7 @@ async def create_project(
             area_uuid=area_uuid,
             todos=todo_list,
         )
-        return result.model_dump()
+        return _with_notes_warning(result.model_dump(), notes)
     except sqlite3.OperationalError:
         return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
     except Exception as e:
@@ -461,7 +519,8 @@ async def update_item(
         title: New title -- one action as a GTD verb phrase (to-dos) or a bare
             noun phrase (projects). No dates, tags, or metadata in the title;
             use the dedicated fields below.
-        notes: New notes (REPLACES the whole body, not a merge). If the item was
+        notes: New notes (REPLACES the whole body, not a merge). Same launchpad
+            shape as create_todo: next action and pointers, plain text. If the item was
             wired with link_blocker, this wipes its ``Gated by:`` /
             ``Gates:`` blocks -- read the current notes, splice your change
             in, and write it all back, or re-run link_blocker afterward.
@@ -495,7 +554,7 @@ async def update_item(
             project_uuid=project_uuid,
             area_uuid=area_uuid,
         )
-        return result.model_dump()
+        return _with_notes_warning(result.model_dump(), notes)
     except sqlite3.OperationalError:
         return ErrorResponse(error="THINGS_UNAVAILABLE", message=_THINGS_UNAVAILABLE_MSG).model_dump()
     except Exception as e:

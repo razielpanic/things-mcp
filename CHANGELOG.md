@@ -6,6 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Opt-in notes-shape warning.** Set `THINGS_MCP_NOTES_WARN_LINES` in the
+  server's `env` to a line count, and `create_todo`, `create_project` and
+  `update_item` add a `notes_warning` to a successful response when the notes
+  run past that many lines or contain Markdown (which Things shows literally).
+  The write still happens. `link_blocker`'s `Gated by:` / `Gates:` blocks don't
+  count toward the limit. Unset, or not a positive integer, means off.
+
+### Changed
+
+- **`notes` descriptions describe a launchpad.** The `create_todo`,
+  `create_project` and `update_item` docstrings, which the model reads at the
+  moment it writes, invited "description, context, links, and any multi-line
+  detail". They now ask for the next action and pointers in plain text, with
+  rationale and history left in the doc the notes link to.
+
 ### Fixed
 
 - **List views carry checklist rows.** `get_today`, `get_upcoming`,
