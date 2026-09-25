@@ -267,6 +267,24 @@ def seed_data(conn: sqlite3.Connection) -> None:
         ],
     )
 
+    # A repeating *project* template with a heading and a to-do under it
+    # (things-mcp#26). The to-do's own rt1_* columns are empty; things.py's
+    # template filter misses it, so reads must drop it and writes refuse it.
+    conn.executemany(
+        """INSERT INTO TMTask
+            (uuid, type, title, status, start, project, heading, "index",
+             creationDate, userModificationDate, rt1_recurrenceRule)
+            VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?)""",
+        [
+            ("RepeatProjectTpl0000001", 1, "Monthly newsletter", None, None, 23,
+             created_ts, modified_ts, b"rule"),
+            ("RepeatHeading0000000001", 2, "DRAFT", "RepeatProjectTpl0000001", None, 24,
+             created_ts, modified_ts, None),
+            ("RepeatTplChild000000001", 0, "Pick the lead story", None,
+             "RepeatHeading0000000001", 25, created_ts, modified_ts, None),
+        ],
+    )
+
     # Areas
     conn.executemany(
         'INSERT INTO TMArea (uuid, title, "index") VALUES (?, ?, ?)',

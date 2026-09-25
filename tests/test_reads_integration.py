@@ -135,6 +135,20 @@ class TestGetItemRepeat:
         assert item.repeat.template_paused is True
         assert item.repeat.next_instance_date == date.today() + timedelta(days=30)
 
+    def test_todo_under_template_project_heading_is_template_child(self, things_db):
+        item = reads.get_item(uuid="RepeatTplChild000000001")
+        assert item is not None
+        assert item.repeat is not None
+        assert item.repeat.role == "template_child"
+        assert item.repeat.template_uuid == "RepeatProjectTpl0000001"
+
+    def test_template_content_stays_out_of_lists_and_search(self, things_db):
+        # things-mcp#26: these leaked into Anytime with project_title null.
+        assert "RepeatTplChild000000001" not in {i.uuid for i in reads.get_anytime(limit=500)}
+        assert "RepeatTplChild000000001" not in {
+            i.uuid for i in reads.search(query="lead story")
+        }
+
     def test_plain_item_has_no_repeat(self, things_db):
         item = reads.get_item(uuid="InboxTask00000000000001")
         assert item is not None

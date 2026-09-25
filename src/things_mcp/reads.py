@@ -152,13 +152,27 @@ def _item_from_dict(
     )
 
 
+def _drop_template_content(raw_items: list[dict]) -> list[dict]:
+    """Remove to-dos that live inside a repeating project template.
+
+    Things never lists them; they are the template's contents, edited only
+    through the repeating project. things.py's own filter misses them because
+    the rule sits on the project, not the to-do (things-mcp#26). Call before
+    slicing to `limit`, so a page is not short by however many were dropped.
+    """
+    hidden = repeats.template_content([r["uuid"] for r in raw_items if r.get("uuid")])
+    if not hidden:
+        return raw_items
+    return [r for r in raw_items if r.get("uuid") not in hidden]
+
+
 def get_inbox(*, limit: int = 50) -> list[ThingsItem]:
     """Get unprocessed items from Inbox.
 
     These are items with start=Inbox (database value 0). They have not
     been triaged into Anytime/Someday yet.
     """
-    raw_items = things.inbox()[:limit]
+    raw_items = _drop_template_content(things.inbox())[:limit]
     return _items_from_dicts(raw_items)
 
 
@@ -168,7 +182,7 @@ def get_today(*, limit: int = 50) -> list[ThingsItem]:
     Uses things.today() which handles the three-query union correctly:
     regular today tasks, unconfirmed scheduled tasks, and overdue deadline tasks.
     """
-    raw_items = things.today()[:limit]
+    raw_items = _drop_template_content(things.today())[:limit]
     return _items_from_dicts(raw_items)
 
 
@@ -178,7 +192,7 @@ def get_upcoming(*, limit: int = 50, days_ahead: int = 30) -> list[ThingsItem]:
     These are items where start_date > today. They will auto-promote to
     Today when their start_date arrives.
     """
-    raw_items = things.upcoming()[:limit]
+    raw_items = _drop_template_content(things.upcoming())[:limit]
     return _items_from_dicts(raw_items)
 
 
@@ -189,7 +203,7 @@ def get_anytime(*, limit: int = 50) -> list[ThingsItem]:
     This is the default state for processed items -- Anytime means
     "available for work whenever."
     """
-    raw_items = things.anytime(start_date=False)[:limit]
+    raw_items = _drop_template_content(things.anytime(start_date=False))[:limit]
     return _items_from_dicts(raw_items)
 
 
@@ -199,7 +213,7 @@ def get_someday(*, limit: int = 50) -> list[ThingsItem]:
     These are items where start=Someday and start_date is null.
     Someday means "not now, maybe later."
     """
-    raw_items = things.someday()[:limit]
+    raw_items = _drop_template_content(things.someday())[:limit]
     return _items_from_dicts(raw_items)
 
 
@@ -324,7 +338,7 @@ def search(
         }
         raw_items.extend(eligible[u] for u in extra if u in eligible)
 
-    return _items_from_dicts(raw_items[:limit])
+    return _items_from_dicts(_drop_template_content(raw_items)[:limit])
 
 
 def get_projects(*, include_items: bool = False) -> list[ThingsItem]:
@@ -366,5 +380,5 @@ def get_areas(*, include_items: bool = False) -> list[AreaItem]:
     if include_items:
         for area in areas:
             raw_children = things.tasks(area=area.uuid)
-            area.items = _items_from_dicts(raw_children)
+            area.items = _items_from_dicts(_drop_template_content(raw_children))
     return areas

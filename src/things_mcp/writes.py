@@ -30,6 +30,7 @@ from typing import Optional
 import things
 
 from things_mcp import evening as evening_reader
+from things_mcp import repeats
 from things_mcp.derivation import derive_list
 from things_mcp.models import ErrorResponse, SuccessResponse, TemporalState
 
@@ -91,7 +92,14 @@ def run_applescript(script: str, *args: str) -> str:
     except subprocess.TimeoutExpired:
         raise RuntimeError("Things 3 is not responding (timeout after 10s)")
     if result.returncode != 0:
-        raise RuntimeError(f"AppleScript error: {result.stderr.strip()}")
+        stderr = result.stderr.strip()
+        if "(301)" in stderr:
+            raise RuntimeError(
+                "Things refused to move this item (AppleScript error 301). "
+                "Known cause: repeat-template content; check get_item's repeat "
+                f"block. Raw: {stderr}"
+            )
+        raise RuntimeError(f"AppleScript error: {stderr}")
     return result.stdout.strip()
 
 
@@ -627,6 +635,33 @@ def _unwire_gated_by_side(dependent_uuid: str, blocker_uuid: str) -> bool:
     return True
 
 
+def _refuse_repeat_template(uuid: str) -> ErrorResponse | None:
+    """Typed refusal for a move Things will reject on repeat-template content.
+
+    Things answers `move`/`schedule` on a repeating template, or on a to-do
+    inside a repeating project template, with AppleScript error 301 ("Cannot
+    move to-do"). Checking first turns that into an error a caller can act
+    on, instead of a raw osascript string mid-batch (things-mcp#26).
+    Returns None when the write may proceed.
+    """
+    info = repeats.repeat_info(uuid)
+    # Only the roles Things refuses. An instance is an ordinary to-do, and
+    # "unknown" is a failed read -- refusing it would let a busy database
+    # block every write; run_applescript still maps a real 301 to text.
+    if info is None or info.role not in ("template", "template_child"):
+        return None
+    tpl = things.get(info.template_uuid) if info.template_uuid else None
+    name = f"'{tpl['title']}'" if isinstance(tpl, dict) and tpl.get("title") else info.template_uuid
+    what = "is a repeating template" if info.role == "template" else f"belongs to the repeating project template {name}"
+    return ErrorResponse(
+        error="REPEAT_TEMPLATE",
+        message=f"Item {uuid} {what}. Things does not allow moving or scheduling "
+        "repeat-template content, and no scripted surface can edit repeats. "
+        "Change it in Things by editing the repeating project, or act on the "
+        "generated copy instead. Safe to skip in a batch.",
+    )
+
+
 def schedule_item(
     *,
     uuid: str,
@@ -648,6 +683,10 @@ def schedule_item(
     CRITICAL: "anytime" must map to move to list "Anytime", NOT Someday.
     """
     _validate_uuid(uuid)
+
+    refused = _refuse_repeat_template(uuid)
+    if refused is not None:
+        return refused
 
     # Capture prior status for the silent-completion guard (scheduling must
     # never change completion status).
@@ -1189,6 +1228,11 @@ def update_item(
         _validate_uuid(project_uuid)
     if area_uuid is not None:
         _validate_uuid(area_uuid)
+    # `when` is guarded inside schedule_item; the structural move is guarded here.
+    if project_uuid is not None or area_uuid is not None:
+        refused = _refuse_repeat_template(uuid)
+        if refused is not None:
+            return refused
 
     # Capture prior status for the silent-completion guard below.
     _pre = things.get(uuid)
@@ -1464,6 +1508,10 @@ def move_to_context(
             error="INVALID_INPUT",
             message="Provide project_uuid or area_uuid, not both.",
         )
+
+    refused = _refuse_repeat_template(uuid)
+    if refused is not None:
+        return refused
 
     _pre = things.get(uuid)
     pre_status = _pre.get("status") if isinstance(_pre, dict) else None

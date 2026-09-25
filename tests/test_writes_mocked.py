@@ -245,6 +245,47 @@ class TestScheduleItem:
         assert isinstance(result, SuccessResponse)
         assert result.success is True
 
+    @patch("things_mcp.writes.subprocess.run")
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.repeats.repeat_info")
+    def test_template_child_refused_before_applescript(self, mock_info, mock_get, mock_run):
+        from things_mcp.models import RepeatInfo
+
+        mock_info.return_value = RepeatInfo(role="template_child", template_uuid="T" * 22)
+        mock_get.return_value = _raw_task(uuid="T" * 22, title="Monthly newsletter")
+        result = writes.schedule_item(uuid=VALID_UUID, when="someday")
+        assert isinstance(result, ErrorResponse)
+        assert result.error == "REPEAT_TEMPLATE"
+        assert "'Monthly newsletter'" in result.message
+        mock_run.assert_not_called()
+
+    @patch("things_mcp.writes.time.sleep")
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    @patch("things_mcp.writes.repeats.repeat_info")
+    def test_instance_and_unknown_are_not_refused(self, mock_info, mock_run, mock_get, mock_sleep):
+        from things_mcp.models import RepeatInfo
+
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.return_value = _raw_task(start="Someday")
+        for role in ("instance", "unknown"):
+            mock_info.return_value = RepeatInfo(role=role)
+            result = writes.schedule_item(uuid=VALID_UUID, when="someday")
+            assert isinstance(result, SuccessResponse), role
+
+    @patch("things_mcp.writes.subprocess.run")
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.repeats.repeat_info")
+    def test_move_to_context_refuses_template_child(self, mock_info, mock_get, mock_run):
+        from things_mcp.models import RepeatInfo
+
+        mock_info.return_value = RepeatInfo(role="template_child", template_uuid="T" * 22)
+        mock_get.return_value = None
+        result = writes.move_to_context(uuid=VALID_UUID, area_uuid="A" * 22)
+        assert isinstance(result, ErrorResponse)
+        assert result.error == "REPEAT_TEMPLATE"
+        mock_run.assert_not_called()
+
     def test_invalid_when(self):
         result = writes.schedule_item(uuid=VALID_UUID, when="garbage")
         assert isinstance(result, ErrorResponse)

@@ -14,6 +14,11 @@ Two roles, both keyed off TMTask columns:
 - template: carries `rt1_recurrenceRule`. Things hides it from every list; it
   is the thing the repeat UI edits.
 - instance: carries `rt1_repeatingTemplate`, the template's uuid.
+- template_child: a to-do inside a repeating *project* template, directly or
+  under one of its headings. Its own rt1_* columns are empty; the rule sits
+  on the project. things.py's template filter tests the to-do's own rule, so
+  these leak into Anytime/search with project_title null, and Things refuses
+  to move them (AppleScript error 301) -- things-mcp#26.
 
 **Stopping or pausing a repeat is UI-only as of Things 3.24.** Checked on
 2026-09-25 against every scripted surface: the AppleScript dictionary has no
@@ -59,6 +64,48 @@ def _unpack_date(value: Optional[int]) -> Optional[date]:
         return None
 
 
+# To-dos whose project -- direct, or the project above their heading -- is a
+# repeating template. Returns (to-do uuid, template project uuid).
+_TEMPLATE_PARENT_SQL = """
+    SELECT t.uuid, p.uuid
+    FROM TMTask t
+    LEFT JOIN TMTask h ON h.uuid = t.heading
+    JOIN TMTask p ON p.uuid = COALESCE(t.project, h.project)
+    WHERE p.rt1_recurrenceRule IS NOT NULL
+"""
+
+
+def template_content(uuids: list[str]) -> set[str]:
+    """The subset of uuids that are to-dos inside a repeating project template.
+
+    For list-view filtering. Fails open: if the database cannot be read this
+    returns an empty set, so a read failure shows the rows (the pre-#26
+    behaviour) rather than silently hiding real work.
+    """
+    if not uuids:
+        return set()
+    conn = None
+    try:
+        conn = sqlite3.connect(f"file:{database_path()}?mode=ro", uri=True)
+        found: set[str] = set()
+        for i in range(0, len(uuids), 500):
+            chunk = uuids[i : i + 500]
+            placeholders = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                _TEMPLATE_PARENT_SQL + f" AND t.uuid IN ({placeholders})", chunk
+            )
+            found.update(r[0] for r in rows)
+        return found
+    except Exception:
+        return set()
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def repeat_info(uuid: str) -> Optional[RepeatInfo]:
     """Repeat relation for one item, or None if it has none.
 
@@ -85,7 +132,10 @@ def repeat_info(uuid: str) -> Optional[RepeatInfo]:
         elif template_uuid:
             role = "instance"
         else:
-            return None
+            parent = conn.execute(_TEMPLATE_PARENT_SQL + " AND t.uuid = ?", (uuid,)).fetchone()
+            if parent is None:
+                return None
+            role, template_uuid = "template_child", parent[1]
 
         tpl = conn.execute(
             "SELECT trashed, status, rt1_instanceCreationPaused, "

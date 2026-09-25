@@ -131,15 +131,17 @@ class RepeatInfo(BaseModel):
     """An item's place in a Things repeat, read from the rt1_* columns.
 
     role is "template" (the hidden item the repeat UI edits), "instance" (a
-    copy the template generated), or "unknown" (the repeat columns could not
-    be read -- not the same as having no repeat, which is repeat=None).
+    copy the template generated), "template_child" (a to-do inside a
+    repeating project template; template_uuid is that project), or "unknown"
+    (the repeat columns could not be read -- not the same as having no
+    repeat, which is repeat=None).
 
     The template_* fields describe the template in both roles, so an instance
     shows whether the repeat behind it is still live. Stopping or pausing a
     repeat is UI-only in Things 3.24; no tool here can do it.
     """
 
-    role: Literal["template", "instance", "unknown"]
+    role: Literal["template", "instance", "template_child", "unknown"]
     template_uuid: Optional[str] = None
     template_found: Optional[bool] = None
     template_trashed: Optional[bool] = None
