@@ -409,12 +409,22 @@ async def create_todo(
     "anytime" sets start=Anytime, "someday" sets start=Someday. Response
     includes temporal_state showing the resulting computed view.
 
+    CONTINGENT OR WAITING-FOR WORK (a step that may or may not happen, when
+    something outside the user's control resolves): prefix the title with the
+    condition, "If seller refuses: file chargeback", and give it a
+    ``deadline`` with ``when="anytime"`` and no start date. The deadline is the
+    check-in: Things shows a countdown and brings the item into Today when the
+    deadline arrives. A start date pretends to know when the other party acts;
+    Someday hides the item. Don't use link_blocker/gated for these: gated
+    means the step *will* happen once its blocker is done.
+
     Args:
         title: One action only -- a GTD next-action verb phrase ("Call Silvio",
             "Draft Q1 invoice"), NOT a sentence. Dates, project/context tags,
             status, and history do NOT belong here -- they have dedicated fields
             (deadline, when, project_uuid, area_uuid, tags) or go in notes. Things
-            is schema-structured by design; keep the title bare.
+            is schema-structured by design; keep the title bare. Exception:
+            a contingent step leads with its condition ("If X: do Y").
         notes: A launchpad, not a document: short plain-text lines saying what
             to do, in what order, plus pointers (file paths, deep links). Things
             shows Markdown literally, so no ``[label](url)`` or ``**bold**``.
@@ -663,6 +673,11 @@ async def link_blocker(blocker_uuid: str, dependent_uuid: str) -> dict:
     to the dependent. Tags and notes are MERGED, never replaced -- existing tags
     and user-authored notes are preserved. Idempotent (calling twice changes
     nothing) and many-to-many (a dependent may be gated by several blockers).
+
+    For certain sequencing only: the dependent WILL happen once the blocker
+    is done. A step that happens only IF an outcome occurs (the blocker might
+    make it moot) is a contingency. See create_todo: "If X:" title, a
+    deadline, no start date, no gated link.
 
     Both sides are verified after writing. If only the dependent side lands, the
     result is a PARTIAL_LINK error -- re-run to complete (it is idempotent).
