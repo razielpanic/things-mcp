@@ -172,9 +172,13 @@ async def get_someday(limit: int = 50) -> dict:
 async def get_logbook(limit: int = 50, period: str = "7d") -> dict:
     """Get completed or canceled items from Logbook.
 
-    Logbook contains items where status is completed or canceled. Status
-    overrides all temporal placement -- start flag and start_date are preserved
-    but do not affect visibility once an item enters Logbook.
+    Returns items whose status is completed or canceled. Completing an item
+    does not move it into the Logbook view right away: Things leaves it
+    checked off in its original list until the next logbook sweep (Settings >
+    General > "Move completed items to Logbook"). Until then its derived_list
+    is that list (e.g. "Today"), not "Logbook". To tell whether an item is
+    done, read temporal_state.status, never derived_list. Don't tell the user
+    something is "in the Logbook" unless derived_list says so.
 
     Args:
         limit: Max items to return.

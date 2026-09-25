@@ -18,7 +18,9 @@ Truth table:
     start=Someday, no start_date         -> Someday
     start=Anytime, no start_date         -> Anytime
 
-Completed/canceled items are in Logbook regardless of other fields.
+Completed/canceled items are in Logbook -- once Things has swept them there.
+Until the next logbook sweep a completed item stays, checked off, in the list
+the rules above give it (things-mcp#8); pass unlogged=True for those.
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ def derive_list(
     start_date: Optional[date],
     today: Optional[date] = None,
     status: str | ItemStatus = ItemStatus.INCOMPLETE,
+    unlogged: bool | None = None,
 ) -> DerivedList:
     """Compute the actual list an item appears in.
 
@@ -41,7 +44,10 @@ def derive_list(
         start: The sticky start flag ("Inbox", "Anytime", or "Someday").
         start_date: The item's start date, or None if unset.
         today: Reference date for today (defaults to date.today()).
-        status: Item status. Completed/canceled items are always Logbook.
+        status: Item status. Completed/canceled items are Logbook, unless
+            unlogged is True.
+        unlogged: True when a closed item has not yet been swept to the
+            Logbook (see logbook.py). None/False keep the Logbook answer.
 
     Returns:
         The DerivedList value representing the item's actual list placement.
@@ -55,8 +61,9 @@ def derive_list(
     if isinstance(status, str):
         status = ItemStatus(status)
 
-    # Completed or canceled -> Logbook
-    if status in (ItemStatus.COMPLETED, ItemStatus.CANCELED):
+    # Completed or canceled -> Logbook, unless not yet swept there, in which
+    # case it still shows (checked off) wherever the rules below place it.
+    if status in (ItemStatus.COMPLETED, ItemStatus.CANCELED) and unlogged is not True:
         return DerivedList.LOGBOOK
 
     # Inbox is always Inbox regardless of start_date

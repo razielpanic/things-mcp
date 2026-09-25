@@ -162,3 +162,18 @@ class TestEdgeCases:
         ancient = date(2020, 1, 1)
         result = derive_list("Anytime", ancient, TODAY)
         assert result == DerivedList.TODAY
+
+
+class TestUnlogged:
+    """things-mcp#8: a closed item not yet swept keeps its list."""
+
+    def test_unlogged_completed_with_today_date_is_today(self):
+        today = date(2026, 9, 25)
+        assert derive_list("Anytime", today, today=today, status="completed", unlogged=True) == DerivedList.TODAY
+
+    def test_unlogged_none_or_false_is_logbook(self):
+        for flag in (None, False):
+            assert derive_list("Anytime", None, status="canceled", unlogged=flag) == DerivedList.LOGBOOK
+
+    def test_unlogged_ignored_for_open_items(self):
+        assert derive_list("Someday", None, status="incomplete", unlogged=True) == DerivedList.SOMEDAY

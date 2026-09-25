@@ -30,6 +30,7 @@ from typing import Optional
 import things
 
 from things_mcp import evening as evening_reader
+from things_mcp import logbook as logbook_reader
 from things_mcp import repeats
 from things_mcp.derivation import derive_list
 from things_mcp.models import ErrorResponse, SuccessResponse, TemporalState
@@ -149,7 +150,9 @@ def _read_temporal_state(uuid: str) -> TemporalState | None:
     return TemporalState(
         start=start,
         start_date=start_date,
-        derived_list=derive_list(start, start_date, status=status),
+        derived_list=derive_list(
+            start, start_date, status=status, unlogged=logbook_reader.is_unlogged(uuid)
+        ),
         status=status,
         evening=evening,
     )

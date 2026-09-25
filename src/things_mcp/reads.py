@@ -18,6 +18,7 @@ import things
 
 from things_mcp import checklist as checklist_reader
 from things_mcp import evening as evening_reader
+from things_mcp import logbook as logbook_reader
 from things_mcp import repeats
 from things_mcp.derivation import derive_list
 from things_mcp.models import AreaItem, ChecklistItem, ItemContext, TemporalState, ThingsItem
@@ -46,9 +47,9 @@ def _items_from_dicts(
     the item dict (things.py does not expose it -- see evening.py), and a list
     view should not pay one round trip per row for it.
     """
-    flags = evening_reader.evening_flags(
-        [r["uuid"] for r in raw_items if r.get("uuid")]
-    )
+    uuids = [r["uuid"] for r in raw_items if r.get("uuid")]
+    flags = evening_reader.evening_flags(uuids)
+    unlogged = logbook_reader.unlogged_flags(uuids)
 
     # List-view rows carry the TMTask.checklist column, a 0/1 flag, where a
     # get_item row carries the rows themselves. Treating the flag as "no
@@ -66,7 +67,12 @@ def _items_from_dicts(
                 r["checklist"] = rows[r["uuid"]]
 
     return [
-        _item_from_dict(r, truncate_notes=truncate_notes, evening=flags.get(r.get("uuid")))
+        _item_from_dict(
+            r,
+            truncate_notes=truncate_notes,
+            evening=flags.get(r.get("uuid")),
+            unlogged=unlogged.get(r.get("uuid")),
+        )
         for r in raw_items
     ]
 
@@ -75,7 +81,11 @@ _UNSET = object()
 
 
 def _item_from_dict(
-    raw: dict, *, truncate_notes: bool = True, evening: bool | None = _UNSET
+    raw: dict,
+    *,
+    truncate_notes: bool = True,
+    evening: bool | None = _UNSET,
+    unlogged: bool | None = _UNSET,
 ) -> ThingsItem:
     """Map a things.py dict to ThingsItem with nested TemporalState and ItemContext.
 
@@ -104,6 +114,8 @@ def _item_from_dict(
     # directly. None where it cannot be read, never False. See evening.py.
     if evening is _UNSET:
         evening = evening_reader.is_evening(uuid)
+    if unlogged is _UNSET:
+        unlogged = logbook_reader.is_unlogged(uuid)
 
     notes = raw.get("notes")
     if truncate_notes and notes and len(notes) > 200:
@@ -121,7 +133,7 @@ def _item_from_dict(
     temporal_state = TemporalState(
         start=start,
         start_date=start_date,
-        derived_list=derive_list(start, start_date, status=status),
+        derived_list=derive_list(start, start_date, status=status, unlogged=unlogged),
         status=status,
         evening=evening,
     )
@@ -238,8 +250,9 @@ def _period_cutoff(period: str, *, today: date | None = None) -> date:
 def get_logbook(*, limit: int = 50, period: str = "7d") -> list[ThingsItem]:
     """Get completed or canceled items.
 
-    Items are in Logbook when status is completed or canceled,
-    regardless of start flag or start_date.
+    Returns completed or canceled items by completion date, including ones
+    Things has not yet swept into the Logbook view. Those report the list they
+    still show in (e.g. Today) as derived_list; status says they are done.
 
     ``period`` is measured against the COMPLETION date. things.py's own
     ``last=`` filter, which this used to pass through, limits by *creation*

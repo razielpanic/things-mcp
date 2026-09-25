@@ -122,6 +122,8 @@ def create_schema(conn: sqlite3.Connection) -> None:
 
         CREATE TABLE IF NOT EXISTS TMSettings (
             uuid TEXT PRIMARY KEY,
+            logInterval INTEGER,
+            manualLogDate REAL,
             uriSchemeAuthenticationToken TEXT
         );
     """)
@@ -283,6 +285,14 @@ def seed_data(conn: sqlite3.Connection) -> None:
             ("RepeatTplChild000000001", 0, "Pick the lead story", None,
              "RepeatHeading0000000001", 25, created_ts, modified_ts, None),
         ],
+    )
+
+    # Logbook sweep state (things-mcp#8). The last sweep ran 10 minutes ago,
+    # so CompletedTask (30 min) and CanceledTask (15 min) have been swept and
+    # OldCompletedTask (5 min) is still showing, checked, in its own list.
+    conn.execute(
+        "INSERT INTO TMSettings (uuid, logInterval, manualLogDate) VALUES (?, ?, ?)",
+        ("Settings00000000000001", 4, unix_timestamp(now - timedelta(minutes=10))),
     )
 
     # Areas

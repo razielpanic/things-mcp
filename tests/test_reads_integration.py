@@ -168,6 +168,31 @@ class TestGetItemRepeat:
         assert "RepeatTemplate000000002" not in uuids
 
 
+class TestUnloggedCompletions:
+    """Completed items stay in their list until Things' logbook sweep (things-mcp#8)."""
+
+    def test_swept_item_is_logbook(self, things_db):
+        item = reads.get_item(uuid="CompletedTask0000000001")
+        assert item.temporal_state.derived_list == "Logbook"
+
+    def test_unswept_item_reports_the_list_it_still_shows_in(self, things_db):
+        item = reads.get_item(uuid="OldCompletedTask0000001")
+        assert item.temporal_state.status == "completed"
+        assert item.temporal_state.derived_list == "Anytime"
+
+    def test_logbook_view_still_returns_unswept_completions(self, things_db):
+        # things-mcp#24: "what did I finish today" must include them.
+        uuids = {i.uuid for i in reads.get_logbook(period="1d")}
+        assert "OldCompletedTask0000001" in uuids
+
+    def test_unverified_interval_falls_back_to_logbook(self, things_db, monkeypatch):
+        from things_mcp import logbook
+
+        monkeypatch.setattr(logbook, "_VERIFIED_INTERVALS", set())
+        item = reads.get_item(uuid="OldCompletedTask0000001")
+        assert item.temporal_state.derived_list == "Logbook"
+
+
 class TestGetItem:
     """Test get_item for valid and invalid UUIDs."""
 

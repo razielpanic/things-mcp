@@ -60,6 +60,8 @@ Returns completed and cancelled items, filtered by a time period.
 **Args:** `limit` (default 50), `period` (default `"7d"` — accepts strings like `"7d"`, `"30d"`, `"1m"`)
 **Returns:** `{view: "Logbook", description, items: [...], count}`
 
+**Not yet logged.** Things keeps a completed item, checked off, in its original list until its next logbook sweep. The sweep timing comes from the "Move completed items to Logbook" setting. Until the sweep runs, `derived_list` reports that list (`Today`, `Anytime`, …), so it matches what the Things UI shows, and `status` is still `completed` or `canceled`. The sweep time comes from `TMSettings.manualLogDate`. This only applies for `logInterval` values that have been verified against the UI; any other value falls back to `Logbook` (see `logbook.py`).
+
 ### `get_item`
 
 Returns a single item by UUID with full detail — full notes (not truncated), full checklist, structural context. Use this when Claude needs the complete picture of one item rather than a list view.
