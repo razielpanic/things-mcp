@@ -138,6 +138,8 @@ The core temporal operation: change which computed view an item appears in. Maps
 **Args:** `uuid` (required), `when` (required)
 **Returns:** `SuccessResponse` with updated `temporal_state` showing the new derivation
 
+**Repeating to-dos.** On a generated copy, every `when` value, including `evening`, moves only that copy: Things records an exception and leaves the recurrence rule alone. Completing a copy with `update_item` leaves the rule alone too. The template itself, and to-dos inside a repeating project template, are refused with `REPEAT_TEMPLATE`. Verified on Things 3.24 on 2026-09-25, by comparing the template's `rt1_recurrenceRule` bytes, modification date, and next-instance date before and after each write.
+
 **The response includes the post-write `temporal_state`** so Claude can confirm the item actually landed in the list the user asked for. This is how Claude can say "done, 'Book flight' is now in Upcoming" without having to call `get_item` afterward.
 
 ### `update_item`
