@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -127,6 +127,27 @@ class ItemContext(BaseModel):
     heading_title: Optional[str] = None
 
 
+class RepeatInfo(BaseModel):
+    """An item's place in a Things repeat, read from the rt1_* columns.
+
+    role is "template" (the hidden item the repeat UI edits), "instance" (a
+    copy the template generated), or "unknown" (the repeat columns could not
+    be read -- not the same as having no repeat, which is repeat=None).
+
+    The template_* fields describe the template in both roles, so an instance
+    shows whether the repeat behind it is still live. Stopping or pausing a
+    repeat is UI-only in Things 3.24; no tool here can do it.
+    """
+
+    role: Literal["template", "instance", "unknown"]
+    template_uuid: Optional[str] = None
+    template_found: Optional[bool] = None
+    template_trashed: Optional[bool] = None
+    template_status: Optional[str] = None
+    template_paused: Optional[bool] = None
+    next_instance_date: Optional[date] = None
+
+
 class ThingsItem(BaseModel):
     """A Things 3 item (to-do, project, or heading) with derived list.
 
@@ -158,6 +179,9 @@ class ThingsItem(BaseModel):
     # Sort order
     today_index: Optional[int] = None
     index: Optional[int] = None
+
+    # Repeat relation (populated only by get_item; None = not repeating)
+    repeat: Optional[RepeatInfo] = None
 
     # Children (populated only when include_items=True for projects)
     items: list[ThingsItem] = Field(default_factory=list)

@@ -210,6 +210,18 @@ async def get_item(uuid: str) -> dict:
     as evidence that an evening write failed. (Before 2026-09-07 this field was
     false for every item ever returned, which is what made three reports of
     "when=evening doesn't take" look real.)
+
+    ``repeat`` is null for an item with no repeat. For a repeating to-do it
+    names the template and that template's state. The template is the hidden
+    item Things' repeat UI edits, and an instance is a copy it generated.
+    ``template_trashed`` or ``template_paused`` true means the repeat is
+    retired even though this instance exists. ``role="unknown"`` means the
+    repeat columns could not be read. Pass ``template_uuid`` back to get_item
+    to inspect the template itself.
+
+    Stopping, pausing, or editing a repeat is UI-only in Things (3.24): no
+    AppleScript, URL-scheme, or Shortcuts surface exposes it. Tell the user to
+    do it in Things rather than attempting it with update_item or delete_item.
     """
     try:
         item = reads.get_item(uuid=uuid)

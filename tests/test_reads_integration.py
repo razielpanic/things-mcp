@@ -108,6 +108,52 @@ class TestSomedayReads:
             assert item.temporal_state.derived_list == "Someday"
 
 
+class TestGetItemRepeat:
+    """get_item exposes the repeat relation things.py drops (things-mcp#30)."""
+
+    def test_instance_names_its_trashed_template(self, things_db):
+        # The #30 failure: the instance looked live while its template was
+        # trashed, and nothing in the payload said so.
+        item = reads.get_item(uuid="RepeatInstance000000001")
+        assert item is not None
+        assert item.repeat is not None
+        assert item.repeat.role == "instance"
+        assert item.repeat.template_uuid == "RepeatTemplate000000001"
+        assert item.repeat.template_found is True
+        assert item.repeat.template_trashed is True
+        assert item.repeat.template_paused is False
+
+    def test_paused_template_reports_its_next_date(self, things_db):
+        from datetime import date, timedelta
+
+        item = reads.get_item(uuid="RepeatTemplate000000002")
+        assert item is not None
+        assert item.repeat is not None
+        assert item.repeat.role == "template"
+        assert item.repeat.template_uuid == "RepeatTemplate000000002"
+        assert item.repeat.template_trashed is False
+        assert item.repeat.template_paused is True
+        assert item.repeat.next_instance_date == date.today() + timedelta(days=30)
+
+    def test_plain_item_has_no_repeat(self, things_db):
+        item = reads.get_item(uuid="InboxTask00000000000001")
+        assert item is not None
+        assert item.repeat is None
+
+    def test_unreadable_columns_are_unknown_not_absent(self, things_db, monkeypatch):
+        from things_mcp import repeats
+
+        monkeypatch.setattr(repeats, "_REQUIRED_COLUMNS", {"no_such_column"})
+        info = repeats.repeat_info("InboxTask00000000000001")
+        assert info is not None
+        assert info.role == "unknown"
+
+    def test_templates_stay_out_of_list_views(self, things_db):
+        uuids = {i.uuid for i in reads.get_someday()} | {i.uuid for i in reads.get_anytime()}
+        assert "RepeatTemplate000000001" not in uuids
+        assert "RepeatTemplate000000002" not in uuids
+
+
 class TestGetItem:
     """Test get_item for valid and invalid UUIDs."""
 

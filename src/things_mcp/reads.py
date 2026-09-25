@@ -18,6 +18,7 @@ import things
 
 from things_mcp import checklist as checklist_reader
 from things_mcp import evening as evening_reader
+from things_mcp import repeats
 from things_mcp.derivation import derive_list
 from things_mcp.models import AreaItem, ChecklistItem, ItemContext, TemporalState, ThingsItem
 
@@ -260,6 +261,7 @@ def get_item(*, uuid: str) -> Optional[ThingsItem]:
         pass
 
     item = _item_from_dict(raw, truncate_notes=False)
+    item.repeat = repeats.repeat_info(uuid)
 
     # If this is a project, populate its child tasks. Mirrors the
     # get_projects(include_items=True) pattern — queried separately by

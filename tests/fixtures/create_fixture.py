@@ -60,7 +60,10 @@ def create_schema(conn: sqlite3.Connection) -> None:
             creationDate REAL,
             userModificationDate REAL,
             stopDate REAL,
-            rt1_recurrenceRule TEXT,
+            rt1_repeatingTemplate TEXT,
+            rt1_recurrenceRule BLOB,
+            rt1_instanceCreationPaused INTEGER,
+            rt1_nextInstanceStartDate INTEGER,
             deadlineSuppressionDate TEXT,
             -- Things' name for the Today sub-section: 0 = Today, 1 = This
             -- Evening. This column used to be called `evening` here, a name
@@ -239,6 +242,29 @@ def seed_data(conn: sqlite3.Connection) -> None:
              creationDate, userModificationDate, stopDate, startBucket)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         tasks,
+    )
+
+    # Repeats (things-mcp#30). A trashed template with an instance it
+    # generated, plus a live, paused template with a next instance date.
+    # things.py hides templates from list queries by rt1_recurrenceRule, so
+    # these rows never surface in list views.
+    conn.executemany(
+        """INSERT INTO TMTask
+            (uuid, type, title, status, start, trashed, "index",
+             creationDate, userModificationDate, startDate,
+             rt1_repeatingTemplate, rt1_recurrenceRule,
+             rt1_instanceCreationPaused, rt1_nextInstanceStartDate)
+            VALUES (?, 0, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        [
+            ("RepeatTemplate000000001", "Water the ficus", 2, 1, 20,
+             created_ts, modified_ts, None, None, b"rule", 0, None),
+            ("RepeatInstance000000001", "Water the ficus", 1, 0, 21,
+             created_ts, modified_ts, things_date(today),
+             "RepeatTemplate000000001", None, None, None),
+            ("RepeatTemplate000000002", "Rotate the backup drive", 2, 0, 22,
+             created_ts, modified_ts, None, None, b"rule", 1,
+             things_date(today + timedelta(days=30))),
+        ],
     )
 
     # Areas

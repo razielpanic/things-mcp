@@ -67,6 +67,8 @@ Returns a single item by UUID with full detail — full notes (not truncated), f
 **Args:** `uuid` (required)
 **Returns:** the item, or an error if not found
 
+**Repeats.** A `repeat` block appears on repeating to-dos and is `null` otherwise. `role` is `template` (the hidden item Things' repeat UI edits), `instance` (a copy it generated), or `unknown` (the repeat columns couldn't be read). Both roles report the template's `template_trashed`, `template_paused`, `template_status`, and `next_instance_date`, so an instance shows whether the repeat behind it is still live. These come from Things' `rt1_*` columns, which things.py doesn't expose. Stopping or pausing a repeat is done by hand in Things: as of 3.24 no AppleScript, URL-scheme, or Shortcuts surface exposes it (see `repeats.py`).
+
 ### `search`
 
 Structured search across all items. Supports filter combinations that don't correspond to any single sidebar view.
