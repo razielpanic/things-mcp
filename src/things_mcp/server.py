@@ -576,6 +576,8 @@ async def schedule_item(uuid: str, when: str) -> dict:
     - "YYYY-MM-DD" -> sets start_date to that date -> Today or Upcoming
     - "anytime" -> clears start_date, sets start=Anytime (CRITICAL: not Someday)
     - "someday" -> clears start_date, sets start=Someday
+    - "inbox" -> clears start_date, sets start=Inbox, and Things drops
+      the area (un-triage: Inbox items have no context)
 
     Response includes updated temporal_state showing the state transition result.
     """

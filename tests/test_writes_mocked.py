@@ -211,6 +211,33 @@ class TestScheduleItem:
     @patch("things_mcp.writes.time.sleep")
     @patch("things_mcp.writes.things.get")
     @patch("things_mcp.writes.subprocess.run")
+    def test_inbox(self, mock_run, mock_get, mock_sleep):
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.return_value = _raw_task(start="Inbox", start_date=None)
+        result = writes.schedule_item(uuid=VALID_UUID, when="inbox")
+        assert isinstance(result, SuccessResponse)
+        assert result.action == "moved_to_inbox"
+        script = mock_run.call_args[1].get("input") or mock_run.call_args[0][0]
+        assert 'move theToDo to list "Inbox"' in script
+        assert result.temporal_state is not None
+        assert result.temporal_state.derived_list == "Inbox"
+
+    @patch("things_mcp.writes.time.sleep")
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_inbox_move_that_does_not_land_fails_verification(
+        self, mock_run, mock_get, mock_sleep
+    ):
+        # Things left the item dated: the move silently did not take.
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.return_value = _raw_task(start="Anytime", start_date="2026-09-18")
+        result = writes.schedule_item(uuid=VALID_UUID, when="inbox")
+        assert isinstance(result, ErrorResponse)
+        assert result.error == "VERIFY_FAILED"
+
+    @patch("things_mcp.writes.time.sleep")
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
     def test_specific_date(self, mock_run, mock_get, mock_sleep):
         mock_run.return_value = _mock_subprocess_ok()
         mock_get.return_value = _raw_task(start_date="2026-06-15")

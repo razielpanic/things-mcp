@@ -643,6 +643,7 @@ def schedule_item(
     - "YYYY-MM-DD" -> schedule for that date
     - "anytime" -> move to list "Anytime" (clears start_date, sets start=Anytime)
     - "someday" -> move to list "Someday" (clears start_date, sets start=Someday)
+    - "inbox" -> move to list "Inbox" (clears start_date, sets start=Inbox)
 
     CRITICAL: "anytime" must map to move to list "Anytime", NOT Someday.
     """
@@ -709,6 +710,15 @@ end tell
 '''
         run_applescript(script)
 
+    elif when_lower == "inbox":
+        script = f'''
+tell application "Things3"
+    set theToDo to to do id "{uuid}"
+    move theToDo to list "Inbox"
+end tell
+'''
+        run_applescript(script)
+
     elif _DATE_RE.match(when_lower):
         try:
             target_date = date.fromisoformat(when_lower)
@@ -731,7 +741,7 @@ end tell
         return ErrorResponse(
             error="INVALID_WHEN",
             message=f"Invalid when value: {when!r}. "
-            "Expected: today, tomorrow, evening, anytime, someday, or YYYY-MM-DD.",
+            "Expected: today, tomorrow, evening, anytime, someday, inbox, or YYYY-MM-DD.",
         )
 
     # Map when values to action strings
@@ -741,6 +751,7 @@ end tell
         "evening": "scheduled_evening",
         "anytime": "moved_to_anytime",
         "someday": "moved_to_someday",
+        "inbox": "moved_to_inbox",
     }
     action = when_to_action.get(when_lower, "scheduled")
 
@@ -760,6 +771,16 @@ end tell
     )
     if guard is not None:
         return guard
+
+    # Inbox is the one move whose landing is cheap to check field-for-field:
+    # start=Inbox with no start_date. Anything else means Things refused the
+    # move (e.g. a project, which cannot live in the Inbox).
+    if when_lower == "inbox" and (raw.get("start") != "Inbox" or raw.get("start_date")):
+        return ErrorResponse(
+            error="VERIFY_FAILED",
+            message=f"Item {uuid} did not land in the Inbox "
+            f"(start={raw.get('start')!r}, start_date={raw.get('start_date')!r}).",
+        )
 
     return SuccessResponse(
         uuid=uuid,

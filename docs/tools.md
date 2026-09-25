@@ -129,6 +129,7 @@ The core temporal operation: change which computed view an item appears in. Maps
 - `"YYYY-MM-DD"` → `start_date = that date` → Today or Upcoming depending on the date
 - `"anytime"` → clears `start_date`, sets `start = Anytime` → item appears in **Anytime** (**CRITICAL: not Someday**)
 - `"someday"` → clears `start_date`, sets `start = Someday` → item appears in **Someday**
+- `"inbox"` → clears `start_date`, sets `start = Inbox` → item appears in **Inbox** (un-triage). Things also detaches it from its area, as Inbox items have no context (verified live 2026-09-25)
 
 **Args:** `uuid` (required), `when` (required)
 **Returns:** `SuccessResponse` with updated `temporal_state` showing the new derivation
