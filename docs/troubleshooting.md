@@ -26,6 +26,7 @@ Things that might go wrong, and what to do about them. Organized by symptom.
 1. **Is Things 3 running?** Launch it. The MCP reads the live Things database; if Things 3 isn't running, the database may be in a state the `things.py` library can't read.
 2. **Is your Things library initialized?** First-time install of Things 3 creates the database lazily. If you've never actually used Things 3 on this Mac, open it and add one todo — that'll materialize the database.
 3. **Did you change your iCloud/Things sync state recently?** iCloud sync can temporarily lock the SQLite file. Wait a minute and try again.
+4. **Does the server's Python have Full Disk Access?** If Things is running and the error persists, especially after a Claude update, the server is being refused access to the database. See [README § Full Disk Access](../README.md#full-disk-access).
 
 ## `VERIFY_FAILED` error on a write operation
 

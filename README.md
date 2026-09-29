@@ -79,6 +79,20 @@ Claude handles the tool-calling automatically — you don't need to know or care
 
 Full setup walkthrough (Claude Code, troubleshooting, auth token for advanced operations) is in [docs/setup.md](docs/setup.md).
 
+### Full Disk Access
+
+Things keeps its database under `~/Library/Group Containers/JLMPQHK86H.com.culturedcode.ThingsMac/`, which macOS protects with Full Disk Access. A server without that access fails every read with `THINGS_UNAVAILABLE`; the underlying error is `sqlite3.OperationalError: unable to open database file`. The database itself is fine.
+
+Grant Full Disk Access to **the Python interpreter that runs this server**. Claude Code installs every update as a new binary at a new, version-stamped path, and macOS ties the grant to that path, so a grant on Claude is gone after the next update. The interpreter's path changes only when you upgrade Python.
+
+1. Find the real interpreter. A venv names it in its `pyvenv.cfg` (`executable = …/python3.12`). For a uv-managed Python that is something like `~/.local/share/uv/python/cpython-3.12.<patch>-macos-aarch64-none/bin/python3.12`.
+2. System Settings → Privacy & Security → Full Disk Access → **+**. Press ⌘⇧G, paste the path, and switch the new entry on.
+3. If you run the server from a venv, create it with the default symlinks (`python3.12 -m venv .venv`). A `--copies` venv puts its own binary at a new path, and that path has no grant.
+4. Set the MCP config's `command` to the venv's `bin/python3`, as an absolute path.
+5. Quit Claude Desktop fully and relaunch it. macOS reads the grant when the process starts.
+
+Skip `~/.local/share/claude/ClaudeCode.app`, even though it looks like a version-independent target. It is a separate file from the binary Claude Code actually runs, and it can lag that binary by many releases, so a grant on it covers nothing.
+
 ## How it works (short version)
 
 Things 3 has two orthogonal dimensions:
