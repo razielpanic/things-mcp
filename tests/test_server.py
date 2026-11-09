@@ -236,6 +236,16 @@ class TestErrorHandling:
         assert result["error"] == "THINGS_UNAVAILABLE"
         assert result["success"] is False
 
+    @patch("things_mcp.server._container_listing", return_value="PermissionError errno=1, Full Disk Access denied for /x/python3.12")
+    @patch("things_mcp.server.reads.get_inbox")
+    async def test_things_unavailable_carries_the_reason(self, mock_fn, _listing):
+        """The swallowed sqlite text hid a TCC denial for a day (#36)."""
+        mock_fn.side_effect = sqlite3.OperationalError("unable to open database file")
+        message = (await get_inbox())["message"]
+        assert "sqlite3: unable to open database file" in message
+        assert "path: " in message
+        assert "Full Disk Access denied for /x/python3.12" in message
+
     @patch("things_mcp.server.reads.get_inbox")
     async def test_generic_exception_returns_read_error(self, mock_fn):
         mock_fn.side_effect = RuntimeError("unexpected failure")
