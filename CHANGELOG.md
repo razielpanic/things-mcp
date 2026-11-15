@@ -30,6 +30,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`update_item(deadline="")` clears the deadline.** Things refuses
+  `set due date … to missing value` (-1700), and the unit test asserted that
+  very string, so it passed while every live clear failed. It now sends
+  `delete due date`, verified against a live to-do (#33).
 - **`update_item` with nothing to change is an error.** A uuid-only call
   reported success and changed nothing; it now returns `NO_CHANGES` and names
   `completed=true` (#35).

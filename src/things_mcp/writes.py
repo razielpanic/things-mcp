@@ -1354,7 +1354,9 @@ def update_item(
     # Handle deadline: date string sets it, empty string clears it
     if deadline is not None:
         if deadline == "":
-            script_lines.append("set due date of theToDo to missing value")
+            # Things refuses `set due date ... to missing value` (-1700, #33);
+            # `delete due date` clears it (verified live 2026-11-14).
+            script_lines.append("delete due date of theToDo")
         else:
             try:
                 target_date = date.fromisoformat(deadline)

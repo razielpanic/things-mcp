@@ -477,7 +477,7 @@ class TestUpdateItem:
     @patch("things_mcp.writes.time.sleep")
     @patch("things_mcp.writes.things.get")
     @patch("things_mcp.writes.subprocess.run")
-    def test_deadline_clear_uses_missing_value(self, mock_run, mock_get, mock_sleep):
+    def test_deadline_clear_uses_delete(self, mock_run, mock_get, mock_sleep):
         # Arrange: post-clear state has deadline=None (follow-up read
         # verification per CLAUDE.md rule 8).
         mock_run.return_value = _mock_subprocess_ok()
@@ -486,11 +486,13 @@ class TestUpdateItem:
         # Act: clear the deadline via the empty-string sentinel
         result = writes.update_item(uuid=VALID_UUID, deadline="")
 
-        # Assert: AppleScript payload uses the `missing value` literal
-        # (fix guard for writes.py:680-683; the pre-fix bug error was
-        # "Can't make missing value into type date").
+        # Assert: `delete due date`, the form Things accepts. This test used to
+        # assert `set due date ... to missing value`, which Things refuses
+        # (-1700) -- so it passed while every live clear failed (#33).
+        # Verified live 2026-11-14: delete cleared TMTask.deadline to NULL.
         script = mock_run.call_args[1].get("input") or mock_run.call_args[0][0]
-        assert "set due date of theToDo to missing value" in script
+        assert "delete due date of theToDo" in script
+        assert "missing value" not in script
 
         # Assert: response contract
         assert isinstance(result, SuccessResponse)
