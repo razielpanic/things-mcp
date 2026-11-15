@@ -18,11 +18,12 @@ import os
 import re
 import sqlite3
 import sys
+from datetime import date, timedelta
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 
-from things_mcp import reads, writes
+from things_mcp import reads, repeats, writes
 from things_mcp.evening import database_path
 from things_mcp.models import ErrorResponse
 
@@ -142,15 +143,24 @@ async def get_upcoming(limit: int = 50, days_ahead: int = 30) -> dict:
     Items auto-promote to Today when start_date arrives. The sticky ``start``
     flag remains unchanged during promotion.
 
-    Returns items with derived_list="Upcoming".
+    Returns items with derived_list="Upcoming", plus ``next_occurrences``:
+    repeating to-dos (and projects) whose next occurrence falls within
+    ``days_ahead`` but which Things hasn't created yet. Things shows those in
+    its Upcoming list; they have no uuid of their own until their date.
+    ``next_occurrences`` is null when the repeat data could not be read, which
+    is not the same as none.
     """
     try:
         items = reads.get_upcoming(limit=limit, days_ahead=days_ahead)
+        upcoming_repeats = repeats.next_occurrences(
+            until=date.today() + timedelta(days=days_ahead)
+        )
         return {
             "view": "Upcoming",
             "description": "Items with start_date > today. Auto-promote to Today when start_date arrives.",
             "items": [item.model_dump() for item in items],
             "count": len(items),
+            "next_occurrences": upcoming_repeats,
         }
     except sqlite3.OperationalError as e:
         return _things_unavailable(e)
@@ -302,6 +312,12 @@ async def search(
     Filter by organizational context (project UUID, area UUID, tag name)
     or temporal fields (start_date, deadline). Date filters accept:
     'future', 'past', or '[operator]YYYY-MM-DD' (e.g., '>2024-01-01').
+
+    Also returns ``repeating_matches``: live repeats whose title contains the
+    query, with their next occurrence. Things hides a repeat's template from
+    every list, so a repeat with no open copy right now is found only here.
+    These match on title alone, ignoring the other filters; null means the
+    repeat data could not be read.
     """
     try:
         items = reads.search(
@@ -319,6 +335,7 @@ async def search(
             "description": f"Search results for '{query}'",
             "items": [item.model_dump() for item in items],
             "count": len(items),
+            "repeating_matches": repeats.next_occurrences(query=query),
         }
     except sqlite3.OperationalError as e:
         return _things_unavailable(e)

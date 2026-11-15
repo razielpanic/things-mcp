@@ -8,6 +8,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Repeats Things hasn't created yet.** `get_upcoming` returns
+  `next_occurrences` and `search` returns `repeating_matches`: live repeats with
+  the date of their next occurrence, which Things shows in Upcoming before the
+  to-do exists. Every list read hid them, so a caller could report a task
+  missing that Things was showing (#34).
 - **Opt-in notes-shape warning.** Set `THINGS_MCP_NOTES_WARN_LINES` in the
   server's `env` to a line count, and `create_todo`, `create_project` and
   `update_item` add a `notes_warning` to a successful response when the notes
@@ -25,6 +30,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`update_item` with nothing to change is an error.** A uuid-only call
+  reported success and changed nothing; it now returns `NO_CHANGES` and names
+  `completed=true` (#35).
 - **List views carry checklist rows.** `get_today`, `get_upcoming`,
   `get_anytime`, `get_someday`, `get_inbox`, `get_logbook` and `search`
   reported `checklist: []` for every item, while `get_item` on the same uuid

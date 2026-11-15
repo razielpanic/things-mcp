@@ -163,3 +163,67 @@ def repeat_info(uuid: str) -> Optional[RepeatInfo]:
                 conn.close()
             except Exception:
                 pass
+
+
+# Live repeat templates (not trashed, open, not paused) with their next
+# occurrence date, and where they live. Projects included: a repeating project
+# shows in Upcoming the same way.
+_NEXT_SQL = """
+    SELECT t.uuid, t.title, t.type, t.rt1_nextInstanceStartDate,
+           COALESCE(a.title, pa.title), p.title
+    FROM TMTask t
+    LEFT JOIN TMTask p ON p.uuid = t.project
+    LEFT JOIN TMArea a ON a.uuid = t.area
+    LEFT JOIN TMArea pa ON pa.uuid = p.area
+    WHERE t.rt1_recurrenceRule IS NOT NULL
+      AND t.trashed = 0 AND t.status = 0
+      AND COALESCE(t.rt1_instanceCreationPaused, 0) = 0
+      AND t.rt1_nextInstanceStartDate IS NOT NULL
+"""
+
+
+def next_occurrences(
+    *, until: Optional[date] = None, query: Optional[str] = None
+) -> Optional[list[dict]]:
+    """Next occurrences of live repeats that Things hasn't created yet.
+
+    Things shows a repeat's next occurrence in Upcoming before the to-do
+    exists: the date lives on the hidden template (rt1_nextInstanceStartDate)
+    until the day it is generated. Every list read filters templates out, so
+    that occurrence was invisible here, and the OM told RP a task Things was
+    showing him did not exist (things-mcp#34).
+
+    ``until`` keeps occurrences on or before that date; ``query`` keeps titles
+    containing it (case-insensitive). Returns None when the database cannot be
+    read -- unknown, not "no repeats".
+    """
+    conn = None
+    try:
+        conn = sqlite3.connect(f"file:{database_path()}?mode=ro", uri=True)
+        out: list[dict] = []
+        for uuid, title, typ, packed, area, project in conn.execute(_NEXT_SQL):
+            when = _unpack_date(packed)
+            if when is None or (until is not None and when > until):
+                continue
+            if query and query.lower() not in (title or "").lower():
+                continue
+            out.append({
+                "template_uuid": uuid,
+                "title": title or "",
+                "type": "project" if typ == 1 else "to-do",
+                "next_occurrence": when.isoformat(),
+                "area_title": area,
+                "project_title": project,
+                "note": "Repeating; Things creates this to-do on that date. "
+                        "Until then it has no uuid of its own to act on.",
+            })
+        out.sort(key=lambda r: r["next_occurrence"])
+        return out
+    except Exception:
+        return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
