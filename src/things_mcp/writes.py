@@ -1217,6 +1217,18 @@ def update_item(
     """
     _validate_uuid(uuid)
 
+    # A call with nothing to change used to report success (things-mcp#35:
+    # status="completed" never reached the server, the item stayed open, and
+    # the reply said "Updated item"). Refuse it so the caller knows.
+    if all(v is None for v in (title, notes, when, deadline, tags, completed,
+                               canceled, project_uuid, area_uuid)):
+        return ErrorResponse(
+            error="NO_CHANGES",
+            message="update_item got nothing to change: pass at least one field "
+                    "(to complete a to-do, completed=true). An argument the tool "
+                    "doesn't declare never reaches it.",
+        )
+
     if project_uuid is not None and area_uuid is not None:
         return ErrorResponse(
             error="INVALID_INPUT",

@@ -452,6 +452,28 @@ class TestMoveToContext:
 class TestUpdateItem:
     """Test update_item field-clearing and update paths."""
 
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_nothing_to_change_is_an_error(self, mock_run, mock_get):
+        """things-mcp#35: a uuid-only call reported success and changed nothing."""
+        result = writes.update_item(uuid=VALID_UUID)
+
+        assert result.error == "NO_CHANGES"
+        assert "completed=true" in result.message
+        mock_run.assert_not_called()
+
+    @patch("things_mcp.writes.time.sleep")
+    @patch("things_mcp.writes.things.get")
+    @patch("things_mcp.writes.subprocess.run")
+    def test_completed_false_is_a_change(self, mock_run, mock_get, mock_sleep):
+        """A False is a real value (reopen), not "nothing passed"."""
+        mock_run.return_value = _mock_subprocess_ok()
+        mock_get.return_value = _raw_task()
+
+        result = writes.update_item(uuid=VALID_UUID, completed=False)
+
+        assert getattr(result, "error", None) != "NO_CHANGES"
+
     @patch("things_mcp.writes.time.sleep")
     @patch("things_mcp.writes.things.get")
     @patch("things_mcp.writes.subprocess.run")
